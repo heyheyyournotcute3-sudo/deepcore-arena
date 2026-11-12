@@ -12,6 +12,10 @@ path = "src/main.rs"
 [dependencies]
 bevy = { workspace = true, features = ["multi_threaded", "bevy_log", "std"] }
 deepcore-shared = { workspace = true }
+bevy_replicon = { workspace = true }
+bevy_replicon_renet = { workspace = true }
+serde = { workspace = true }
+postcard = { workspace = true }
 tracing = { workspace = true }
 
 [lints]

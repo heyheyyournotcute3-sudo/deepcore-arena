@@ -7,7 +7,19 @@ pub const CHUNK_SIZE: i32 = 32;
 pub const CHUNK_VOLUME: usize = (CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE) as usize;
 
 /// Position of a chunk in the chunk grid. One unit is one whole chunk.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
+#[derive(
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Debug,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+)]
 pub struct ChunkPos {
     /// Chunk coordinate along X.
     pub x: i32,
@@ -57,7 +69,19 @@ impl ChunkPos {
 }
 
 /// Position of a single block in world space.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
+#[derive(
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Debug,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+)]
 pub struct BlockPos {
     /// Block coordinate along X.
     pub x: i32,

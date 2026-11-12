@@ -79,8 +79,7 @@ pub struct ChunkRenderPlugin;
 
 impl Plugin for ChunkRenderPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<ClientChunks>()
-            .init_resource::<MeshJobs>()
+        app.init_resource::<MeshJobs>()
             .add_systems(Startup, setup_render_assets)
             .add_systems(
                 Update,

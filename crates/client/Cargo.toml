@@ -27,8 +27,13 @@ bevy = { workspace = true, features = [
     "tonemapping_luts",
     "zstd_rust",
     "std",
+    "debug",
 ] }
 deepcore-shared = { workspace = true }
+bevy_replicon = { workspace = true }
+bevy_replicon_renet = { workspace = true }
+serde = { workspace = true }
+postcard = { workspace = true }
 tracing = { workspace = true }
 
 [lints]

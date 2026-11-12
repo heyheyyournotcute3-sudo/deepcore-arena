@@ -8,8 +8,11 @@ use bevy::window::WindowResolution;
 
 mod diagnostics;
 mod hud;
+mod net;
 mod player;
 mod render;
+mod session;
+mod ui;
 
 use deepcore_shared::content::registry::Registry;
 use deepcore_shared::content::{ContentRegistry, load_from_dir};
@@ -18,12 +21,82 @@ use deepcore_shared::worldgen::WorldGen;
 /// Default world seed used when none is given on the command line.
 pub const DEFAULT_SEED: u64 = 2024;
 
+/// netcode protocol id, shared with the server.
+pub const NET_PROTOCOL_ID: u64 = 0x0DE9_C0DE;
+
+/// Command-line options for the client.
+#[derive(Debug, Clone, Default, bevy::prelude::Resource)]
+pub struct ClientArgs {
+    /// World seed for single-player.
+    pub seed: u64,
+    /// Address to join directly, skipping the menu.
+    pub join: Option<String>,
+    /// Display name.
+    pub name: String,
+    /// Run without a window (for automated tests).
+    pub headless: bool,
+    /// Exit after this many seconds (headless testing).
+    pub run_secs: Option<u64>,
+    /// Simulated latency in milliseconds.
+    pub simulate_latency_ms: u32,
+    /// Simulated packet loss percent.
+    pub simulate_loss_percent: u32,
+}
+
+fn parse_client_args() -> ClientArgs {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut parsed = ClientArgs {
+        seed: DEFAULT_SEED,
+        name: "Miner".to_string(),
+        ..default()
+    };
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--seed" => {
+                if let Some(value) = args.get(index + 1).and_then(|v| v.parse().ok()) {
+                    parsed.seed = value;
+                }
+                index += 2;
+            }
+            "--join" => {
+                parsed.join = args.get(index + 1).cloned();
+                index += 2;
+            }
+            "--name" => {
+                if let Some(value) = args.get(index + 1) {
+                    parsed.name = value.clone();
+                }
+                index += 2;
+            }
+            "--headless" => {
+                parsed.headless = true;
+                index += 1;
+            }
+            "--run-secs" => {
+                parsed.run_secs = args.get(index + 1).and_then(|v| v.parse().ok());
+                index += 2;
+            }
+            "--simulate-latency" => {
+                if let Some(value) = args.get(index + 1).and_then(|v| v.parse().ok()) {
+                    parsed.simulate_latency_ms = value;
+                }
+                index += 2;
+            }
+            "--simulate-loss" => {
+                if let Some(value) = args.get(index + 1).and_then(|v| v.parse().ok()) {
+                    parsed.simulate_loss_percent = value;
+                }
+                index += 2;
+            }
+            _ => index += 1,
+        }
+    }
+    parsed
+}
+
 fn main() {
-    let seed = std::env::args()
-        .skip_while(|a| a != "--seed")
-        .nth(1)
-        .and_then(|s| s.parse::<u64>().ok())
-        .unwrap_or(DEFAULT_SEED);
+    let args = parse_client_args();
 
     let registry = match load_registry() {
         Ok(registry) => registry,
@@ -33,12 +106,22 @@ fn main() {
         }
     };
 
-    App::new()
-        .add_plugins(
+    let mut app = App::new();
+
+    if args.headless {
+        // Headless mode exists so the network tests can run without a GPU.
+        app.add_plugins(
+            MinimalPlugins
+                .build()
+                .add(bevy::log::LogPlugin::default())
+                .add(bevy::state::app::StatesPlugin),
+        );
+    } else {
+        app.add_plugins(
             DefaultPlugins
                 .set(AssetPlugin {
-                    // Assets live at the workspace root, not next to the binary, so the
-                    // game runs correctly from `cargo run` and from a release bundle.
+                    // Assets live at the workspace root, not next to the binary,
+                    // so the game runs from `cargo run` and from a bundle alike.
                     file_path: asset_root(),
                     ..default()
                 })
@@ -50,18 +133,63 @@ fn main() {
                     }),
                     ..default()
                 }),
-        )
-        .insert_resource(ClearColor(Color::srgb(0.42, 0.56, 0.72)))
-        .insert_resource(WorldGen::new(seed, registry.clone()))
+        );
+        app.insert_resource(ClearColor(Color::srgb(0.42, 0.56, 0.72)));
+    }
+
+    app.insert_resource(WorldGen::new(args.seed, registry.clone()))
         .insert_resource(ContentRegistry(registry))
+        .insert_resource(args.clone())
         .add_plugins(deepcore_shared::SharedPlugin)
-        .add_plugins((
+        .add_plugins(net::NetClientPlugin)
+        .add_plugins(session::SessionPlugin);
+
+    if !args.headless {
+        app.add_plugins((
             render::RenderPlugin,
             player::PlayerPlugin,
             hud::HudPlugin,
             diagnostics::DiagnosticsPlugin,
-        ))
-        .run();
+            ui::menu::MenuPlugin,
+        ));
+    }
+
+    // Joining directly skips the menu entirely.
+    if let Some(address) = args.join.clone() {
+        let name = args.name.clone();
+        app.add_systems(
+            Startup,
+            move |mut start: MessageWriter<ui::menu::StartSession>| match net::parse_server_addr(
+                &address,
+                deepcore_shared::protocol::DEFAULT_PORT,
+            ) {
+                Ok(addr) => {
+                    start.write(ui::menu::StartSession {
+                        mode: net::SessionMode::Client {
+                            addr,
+                            name: name.clone(),
+                        },
+                        host_server: false,
+                    });
+                }
+                Err(err) => error!(%err, "bad --join address"),
+            },
+        );
+    }
+
+    if let Some(secs) = args.run_secs {
+        app.add_systems(
+            Update,
+            move |time: Res<Time>, mut exit: MessageWriter<AppExit>| {
+                if time.elapsed_secs() >= secs as f32 {
+                    info!(secs, "run duration reached, exiting");
+                    exit.write(AppExit::Success);
+                }
+            },
+        );
+    }
+
+    app.run();
 }
 
 /// Finds the `assets` directory.
