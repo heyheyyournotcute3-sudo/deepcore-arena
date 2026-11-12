@@ -82,12 +82,16 @@ impl Bot {
     }
 
     /// The player view the validator checks.
-    fn view(&self) -> PlayerView {
+    ///
+    /// Bots hold the same steel pickaxe every player spawns with, so their
+    /// mining attempts exercise the real tier rules instead of always failing
+    /// on the bare-hands fallback.
+    fn view(&self, tool: deepcore_shared::mining::MiningTool) -> PlayerView {
         let aabb = self.state.aabb();
         PlayerView {
             eye: self.state.eye_position(),
             look: self.state.look_direction(),
-            tool: deepcore_shared::mining::MiningTool::HANDS,
+            tool,
             hotbar: [None; 9],
             body_min: aabb.min(),
             body_max: aabb.max(),
@@ -166,6 +170,13 @@ fn tick_bots(
     let physics = physics.map(|p| *p).unwrap_or_default();
     let blocks = BotWorld { world: &world };
 
+    // The tool every player starts with.
+    let tool = registry
+        .0
+        .item("steel_pickaxe")
+        .and_then(|item| deepcore_shared::mining::MiningTool::from_item(registry.0.item_info(item)))
+        .unwrap_or(deepcore_shared::mining::MiningTool::HANDS);
+
     for bot in bots.bots.iter_mut() {
         if bot.input_timer == 0 {
             bot.reroll();
@@ -183,13 +194,24 @@ fn tick_bots(
                 (eye.y + look.y * 2.0).floor() as i32,
                 (eye.z + look.z * 2.0).floor() as i32,
             );
-            let view = bot.view();
+            let view = bot.view(tool);
             match validate_mining(&view, target, FaceWire::Up, &registry, &blocks) {
                 Ok(plan) => {
                     timers.start(bot.id, plan.block, plan.ticks);
                     bot.accepted += 1;
                 }
-                Err(_) => bot.rejected += 1,
+                Err(reason) => {
+                    bot.rejected += 1;
+                    if bot.rejected == 1 {
+                        warn!(
+                            bot = bot.id,
+                            tag = reason.tag(),
+                            target = ?target,
+                            eye = ?view.eye,
+                            "bot mining rejected"
+                        );
+                    }
+                }
             }
         }
     }
@@ -200,7 +222,7 @@ fn report_bots(bots: Res<Bots>, ticks: Res<TickCounter>, mut last: Local<u64>) {
     if bots.bots.is_empty() || ticks.ticks == 0 {
         return;
     }
-    if ticks.ticks % 30 != 0 || ticks.ticks == *last {
+    if !ticks.ticks.is_multiple_of(30) || ticks.ticks == *last {
         return;
     }
     *last = ticks.ticks;

@@ -10,19 +10,22 @@ use bevy_replicon::prelude::{ClientId, FromClient, Replicated, SendTargets, ToCl
 use deepcore_shared::content::ContentRegistry;
 use deepcore_shared::movement::{PlayerInput, PlayerPhysics, PlayerState, step_player};
 use deepcore_shared::protocol::{
-    FaceWire, MiningRefused, MoveCorrection, MoveInput, PlaceBlock, PlayerInfo, PlayerTransform,
-    StartMining, StopMining, Vitals,
+    MiningRefused, MoveCorrection, MoveInput, PlaceBlock, PlayerInfo, PlayerTransform, StartMining,
+    StopMining, Vitals,
 };
-use deepcore_shared::voxel::{BlockId, BlockPos};
+use deepcore_shared::voxel::BlockPos;
 use deepcore_shared::worldgen::WorldGen;
 
 use crate::PendingBlockChanges;
-use crate::net::{ClientRegistry, ConnectedPlayer};
+use crate::net::ClientRegistry;
 use crate::sim::mining::{MiningTimers, WorldBlocks, try_start_mining};
 use crate::sim::validate::{PlayerView, validate_placing};
 use crate::world::ServerWorld;
 
 /// Links a server-side avatar entity back to its client.
+///
+/// The client entity is what chunk streaming and per-client messages address, so
+/// this is the join between "who is connected" and "where their body is".
 #[derive(Component, Debug, Clone, Copy)]
 pub struct ConnectedAvatar {
     /// The client entity that owns this avatar.
@@ -184,7 +187,7 @@ pub fn apply_movement(
 /// Handles mining start intents with full validation.
 pub fn handle_start_mining(
     mut intents: MessageReader<FromClient<StartMining>>,
-    mut registry: ResMut<ClientRegistry>,
+    registry: Res<ClientRegistry>,
     avatars: Query<(&ServerPlayerState, &ConnectedAvatar)>,
     world: Res<ServerWorld>,
     registry_content: Res<ContentRegistry>,
@@ -222,16 +225,15 @@ pub fn handle_start_mining(
             &registry_content,
             &world,
             &mut timers,
-        ) {
-            if let Some(text) = reason.client_message() {
-                refused.write(ToClients {
-                    targets: SendTargets::Single(ClientId::Client(client_entity)),
-                    message: MiningRefused {
-                        block: message.block,
-                        reason: text,
-                    },
-                });
-            }
+        ) && let Some(text) = reason.client_message()
+        {
+            refused.write(ToClients {
+                targets: SendTargets::Single(ClientId::Client(client_entity)),
+                message: MiningRefused {
+                    block: message.block,
+                    reason: text,
+                },
+            });
         }
     }
 }
@@ -303,16 +305,16 @@ pub fn handle_place_block(
                     .and_then(|(item, _)| content.0.items.get(item as usize))
                     .map(|info| info.name.clone());
                 let block = item_name.and_then(|name| content.0.block(&name));
-                if let Some(block) = block {
-                    if world.set_block(destination, block) {
-                        pending
-                            .0
-                            .changes
-                            .push(deepcore_shared::protocol::BlockChange {
-                                pos: destination,
-                                block: block.0,
-                            });
-                    }
+                if let Some(block) = block
+                    && world.set_block(destination, block)
+                {
+                    pending
+                        .0
+                        .changes
+                        .push(deepcore_shared::protocol::BlockChange {
+                            pos: destination,
+                            block: block.0,
+                        });
                 }
             }
             Err(reason) => {
@@ -324,19 +326,4 @@ pub fn handle_place_block(
             }
         }
     }
-}
-
-/// Face conversion helper for callers outside validation.
-pub fn face_normal(face: FaceWire) -> (i32, i32, i32) {
-    face.normal()
-}
-
-/// Convenience: the block at a position, or air when unloaded.
-pub fn block_or_air(world: &ServerWorld, pos: BlockPos) -> BlockId {
-    world.block_at(pos).unwrap_or(BlockId::AIR)
-}
-
-/// Convenience: a player by id.
-pub fn player_by_id<'a>(registry: &'a ClientRegistry, id: u64) -> Option<&'a ConnectedPlayer> {
-    registry.by_player_id(id)
 }

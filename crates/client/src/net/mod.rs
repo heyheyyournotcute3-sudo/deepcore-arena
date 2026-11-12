@@ -15,7 +15,7 @@ use bevy_replicon_renet::{RenetChannelsExt, RenetClient, RepliconRenetPlugins};
 
 use deepcore_shared::protocol::{
     BlockChangeBatch, ChatMessage, ChunkBatch, ChunkUnload, ClientHello, MoveCorrection,
-    PROTOCOL_VERSION, ServerHello,
+    ServerHello,
 };
 
 /// Where to connect, or whether to host locally.
@@ -33,9 +33,10 @@ pub enum SessionMode {
 }
 
 /// Connection status shown by the loading screen.
-#[derive(Resource, Debug, Clone, PartialEq)]
+#[derive(Resource, Debug, Clone, PartialEq, Default)]
 pub enum ConnectionState {
     /// Not connected and not connecting.
+    #[default]
     Idle,
     /// Handshake sent, waiting for the server's answer.
     Connecting,
@@ -48,12 +49,6 @@ pub enum ConnectionState {
     Playing,
     /// Refused or disconnected, with a reason to show the player.
     Failed(String),
-}
-
-impl Default for ConnectionState {
-    fn default() -> Self {
-        Self::Idle
-    }
 }
 
 /// The player's server-assigned identity.
@@ -76,6 +71,9 @@ pub struct Prediction {
     pub corrections: u32,
     /// Smoothing offset currently being blended out, in blocks.
     pub smoothing_offset: Vec3,
+    /// The magnitude of `smoothing_offset` when the blend started, so the decay
+    /// can be linear and reach zero exactly.
+    pub smoothing_start_length: f32,
 }
 
 /// How long to blend a small correction instead of snapping.
@@ -104,7 +102,10 @@ impl Plugin for NetClientPlugin {
             .add_server_message::<MoveCorrection>(Channel::Unordered)
             .add_server_message::<deepcore_shared::protocol::MiningRefused>(Channel::Ordered)
             .add_server_message::<ChatMessage>(Channel::Ordered)
-            .add_systems(Update, (handle_server_hello, handle_corrections));
+            .add_systems(
+                Update,
+                (handle_server_hello, handle_corrections, apply_smoothing),
+            );
     }
 }
 
@@ -192,35 +193,6 @@ pub struct PendingHello {
     pub name: String,
 }
 
-/// Sends the handshake as soon as the transport connects.
-pub fn send_hello_when_connected(
-    mut client: ResMut<RenetClient>,
-    hello: Option<Res<PendingHello>>,
-    mut out: MessageWriter<ClientHello>,
-    mut state: ResMut<ConnectionState>,
-    mut sent: Local<bool>,
-) {
-    let Some(hello) = hello else {
-        return;
-    };
-    if !client.is_connected() {
-        if *state == ConnectionState::Idle {
-            *state = ConnectionState::Connecting;
-        }
-        return;
-    }
-    if *sent {
-        return;
-    }
-    *sent = true;
-    out.write(ClientHello {
-        protocol_version: PROTOCOL_VERSION,
-        content_hash: hello.content_hash,
-        display_name: hello.name.clone(),
-    });
-    info!("handshake sent");
-}
-
 /// Applies the server's answer to the handshake.
 pub fn handle_server_hello(
     mut messages: MessageReader<ServerHello>,
@@ -275,6 +247,7 @@ pub fn handle_corrections(
             // Small disagreement: keep the predicted position and blend the
             // difference out over the smoothing window instead of snapping.
             prediction.smoothing_offset = error;
+            prediction.smoothing_start_length = error.length();
         } else {
             // Large disagreement (teleport, respawn, or a real desync): snap.
             runtime.state.position = server_pos;
@@ -291,10 +264,18 @@ pub fn apply_smoothing(time: Res<Time>, mut prediction: ResMut<Prediction>) {
     if prediction.smoothing_offset == Vec3::ZERO {
         return;
     }
-    let decay = (time.delta_secs() / SMOOTHING_SECS).clamp(0.0, 1.0);
-    prediction.smoothing_offset *= 1.0 - decay;
-    if prediction.smoothing_offset.length() < 1e-3 {
+    // Linear decay: the offset shrinks by (start / SMOOTHING_SECS) per second,
+    // so it reaches exactly zero after the window. A multiplicative decay only
+    // approaches zero and leaves a permanent offset dragging the camera.
+    let start = prediction.smoothing_start_length.max(1e-6);
+    let rate = start / SMOOTHING_SECS;
+    let shrink = rate * time.delta_secs();
+    let current = prediction.smoothing_offset.length();
+    if shrink >= current {
         prediction.smoothing_offset = Vec3::ZERO;
+        prediction.smoothing_start_length = 0.0;
+    } else {
+        prediction.smoothing_offset *= (current - shrink) / current;
     }
 }
 
@@ -364,17 +345,46 @@ mod tests {
         );
     }
 
-    #[test]
-    fn smoothing_decays_to_zero() {
-        let mut offset = Vec3::new(0.25, 0.0, 0.0);
-        // Ten frames of 10 ms each is the full 100 ms window.
-        for _ in 0..10 {
-            let decay = (0.01 / SMOOTHING_SECS).clamp(0.0, 1.0);
-            offset *= 1.0 - decay;
+    /// Applies one frame of the same linear decay `apply_smoothing` performs.
+    fn decay_frame(offset: Vec3, start_len: f32, dt: f32) -> Vec3 {
+        if offset == Vec3::ZERO {
+            return offset;
         }
+        let rate = start_len.max(1e-6) / SMOOTHING_SECS;
+        let shrink = rate * dt;
+        let current = offset.length();
+        if shrink >= current {
+            Vec3::ZERO
+        } else {
+            offset * ((current - shrink) / current)
+        }
+    }
+
+    #[test]
+    fn smoothing_reaches_exactly_zero_within_the_window() {
+        let mut offset = Vec3::new(0.25, 0.0, 0.0);
+        let start_len = offset.length();
+        // One second of 60 fps frames is well past the 100 ms window.
+        for _ in 0..60 {
+            offset = decay_frame(offset, start_len, 1.0 / 60.0);
+        }
+        assert_eq!(
+            offset,
+            Vec3::ZERO,
+            "a correction must fully disappear, not linger"
+        );
+    }
+
+    #[test]
+    fn smoothing_is_partial_inside_the_window() {
+        let start = Vec3::new(0.25, 0.0, 0.0);
+        let start_len = start.length();
+        // Exactly half the window.
+        let halfway = decay_frame(start, start_len, SMOOTHING_SECS * 0.5);
         assert!(
-            offset.length() < 1e-3,
-            "offset should have decayed, got {offset:?}"
+            (halfway.length() - 0.125).abs() < 0.01,
+            "expected about half the offset at half the window, got {}",
+            halfway.length()
         );
     }
 }

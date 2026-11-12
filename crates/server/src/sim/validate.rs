@@ -51,16 +51,8 @@ pub enum Rejected {
     DestinationOccupied,
     /// The new block would intersect the player.
     WouldTrapPlayer,
-    /// The position is outside the world.
-    OutOfWorld,
     /// The chunk is not loaded on the server, so the answer is unknown.
     ChunkNotLoaded,
-    /// The recipe is not unlocked by the tech tree.
-    RecipeLocked,
-    /// The named machine is not within reach.
-    MachineOutOfReach,
-    /// The player entity does not exist (e.g. still joining).
-    NoPlayer,
 }
 
 impl Rejected {
@@ -76,11 +68,7 @@ impl Rejected {
             Rejected::NotPlaceable => "Can't place that".to_string(),
             Rejected::DestinationOccupied => return None,
             Rejected::WouldTrapPlayer => "No room".to_string(),
-            Rejected::OutOfWorld => "Outside the mine".to_string(),
             Rejected::ChunkNotLoaded => return None,
-            Rejected::RecipeLocked => "Not researched yet".to_string(),
-            Rejected::MachineOutOfReach => "Too far away".to_string(),
-            Rejected::NoPlayer => return None,
         })
     }
 
@@ -96,11 +84,7 @@ impl Rejected {
             Rejected::NotPlaceable => "not_placeable",
             Rejected::DestinationOccupied => "destination_occupied",
             Rejected::WouldTrapPlayer => "would_trap_player",
-            Rejected::OutOfWorld => "out_of_world",
             Rejected::ChunkNotLoaded => "chunk_not_loaded",
-            Rejected::RecipeLocked => "recipe_locked",
-            Rejected::MachineOutOfReach => "machine_out_of_reach",
-            Rejected::NoPlayer => "no_player",
         }
     }
 }
@@ -334,14 +318,6 @@ impl<B: BlockSource> RayFilter for WorldFilter<'_, B> {
             Some(block) => !block.is_air(),
             None => false,
         }
-    }
-}
-
-/// Checks that a recipe is unlocked by the current tech state.
-pub fn recipe_unlocked(recipe_tech: Option<u16>, researched: &[bool]) -> bool {
-    match recipe_tech {
-        None => true,
-        Some(tech) => researched.get(tech as usize).copied().unwrap_or(false),
     }
 }
 
@@ -675,18 +651,6 @@ mod tests {
     }
 
     #[test]
-    fn recipes_are_gated_by_research() {
-        assert!(
-            recipe_unlocked(None, &[]),
-            "no tech requirement means always available"
-        );
-        assert!(!recipe_unlocked(Some(3), &[false, false, false]), "locked");
-        assert!(recipe_unlocked(Some(1), &[false, true]), "researched");
-        // An out-of-range tech index must not panic.
-        assert!(!recipe_unlocked(Some(99), &[true]));
-    }
-
-    #[test]
     fn rejection_tags_are_unique_per_variant() {
         let samples = [
             Rejected::OutOfReach {
@@ -704,11 +668,7 @@ mod tests {
             Rejected::NotPlaceable,
             Rejected::DestinationOccupied,
             Rejected::WouldTrapPlayer,
-            Rejected::OutOfWorld,
             Rejected::ChunkNotLoaded,
-            Rejected::RecipeLocked,
-            Rejected::MachineOutOfReach,
-            Rejected::NoPlayer,
         ];
         let tags: std::collections::HashSet<&str> = samples.iter().map(|r| r.tag()).collect();
         assert_eq!(

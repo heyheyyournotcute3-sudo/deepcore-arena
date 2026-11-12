@@ -43,7 +43,10 @@ impl Plugin for SessionPlugin {
                     finish_loading,
                 )
                     .chain(),
-            );
+            )
+            // Intent sending runs after state updates so it always sees a
+            // consistent view of the player and connection.
+            .add_systems(Update, (send_move_input, send_mining_intents));
     }
 }
 
@@ -64,6 +67,19 @@ fn handle_start_session(
     };
 
     for request in requests.read() {
+        // "Host game" runs the dedicated server as a child process and then
+        // connects to it as a normal client. That keeps one authoritative
+        // simulation implementation instead of a second, in-process copy that
+        // could drift from the dedicated server.
+        if request.host_server
+            && let SessionMode::Client { addr, .. } = &request.mode
+            && let Err(err) = spawn_hosted_server(addr.port(), &registry)
+        {
+            error!(%err, "could not start the hosted server");
+            *state = ConnectionState::Failed(err);
+            continue;
+        }
+
         match &request.mode {
             SessionMode::SinglePlayer => {
                 // No transport: the local generator feeds chunks directly.
@@ -98,15 +114,55 @@ fn handle_start_session(
     }
 }
 
+/// Starts the dedicated server as a child process for "Host game".
+///
+/// The server binary sits next to the client binary in both `cargo run` and a
+/// packaged build.
+fn spawn_hosted_server(port: u16, registry: &ContentRegistry) -> Result<(), String> {
+    let server_binary = std::env::current_exe()
+        .map_err(|err| format!("cannot locate the client binary: {err}"))?
+        .with_file_name(if cfg!(windows) {
+            "server.exe"
+        } else {
+            "server"
+        });
+    if !server_binary.exists() {
+        return Err(format!(
+            "hosting needs the server binary next to the client ({} is missing); \
+             run `cargo build -p deepcore-server` or use Join by IP",
+            server_binary.display()
+        ));
+    }
+
+    // Give the child the same content hash the client has, by pointing it at
+    // the same content directory.
+    let data_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/data");
+
+    let mut command = std::process::Command::new(&server_binary);
+    command
+        .arg("--port")
+        .arg(port.to_string())
+        .arg("--data")
+        .arg(data_dir)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    command
+        .spawn()
+        .map_err(|err| format!("could not start {}: {err}", server_binary.display()))?;
+    info!(port, "hosted server started");
+    let _ = registry;
+    Ok(())
+}
+
 /// Sends the handshake once the transport reports a connection.
 fn send_hello(
-    client: Option<ResMut<bevy_replicon_renet::RenetClient>>,
+    client: Option<Res<bevy_replicon_renet::RenetClient>>,
     hello: Option<Res<crate::net::PendingHello>>,
     mut out: MessageWriter<deepcore_shared::protocol::ClientHello>,
-    mut state: ResMut<ConnectionState>,
+    state: Res<ConnectionState>,
     mut sent: Local<bool>,
 ) {
-    let (Some(mut client), Some(hello)) = (client, hello) else {
+    let (Some(client), Some(hello)) = (client, hello) else {
         return;
     };
     if *sent || !client.is_connected() {
@@ -121,7 +177,7 @@ fn send_hello(
     if *state == ConnectionState::Connecting {
         debug!("handshake sent");
     }
-    let _ = &mut client;
+    let _ = &client;
 }
 
 /// Applies chunk data sent by the server.
@@ -195,6 +251,113 @@ fn finish_loading(
         if let Some(mut next_screen) = next_screen {
             next_screen.set(AppScreen::Playing);
         }
+    }
+}
+
+/// Sends the local player's movement input to the server each tick.
+///
+/// Movement is predicted locally; this is what lets the server stay authoritative
+/// and send corrections back.
+fn send_move_input(
+    state: Res<ConnectionState>,
+    mut out: MessageWriter<deepcore_shared::protocol::MoveInput>,
+    player: Query<&crate::player::PlayerRuntime>,
+    keys: Option<Res<ButtonInput<KeyCode>>>,
+    mut seq: Local<u32>,
+) {
+    if *state != ConnectionState::Playing {
+        return;
+    }
+    let Ok(runtime) = player.single() else {
+        return;
+    };
+
+    let (dir, jump, sprint, crouch) = match keys {
+        Some(keys) => {
+            let mut dir = [0.0f32, 0.0f32];
+            if keys.pressed(KeyCode::KeyW) {
+                dir[1] += 1.0;
+            }
+            if keys.pressed(KeyCode::KeyS) {
+                dir[1] -= 1.0;
+            }
+            if keys.pressed(KeyCode::KeyD) {
+                dir[0] += 1.0;
+            }
+            if keys.pressed(KeyCode::KeyA) {
+                dir[0] -= 1.0;
+            }
+            (
+                dir,
+                keys.pressed(KeyCode::Space),
+                keys.pressed(KeyCode::ShiftLeft),
+                keys.pressed(KeyCode::ControlLeft),
+            )
+        }
+        // Headless clients send a gentle forward drift so the server has
+        // something to simulate.
+        None => ([0.0, 1.0], false, false, false),
+    };
+
+    *seq = seq.wrapping_add(1);
+    out.write(deepcore_shared::protocol::MoveInput {
+        seq: *seq,
+        dir,
+        jump,
+        sprint,
+        crouch,
+        yaw: runtime.state.yaw,
+        pitch: runtime.state.pitch,
+    });
+}
+
+/// Sends mining start/stop intents when the player's mining state changes.
+fn send_mining_intents(
+    state: Res<ConnectionState>,
+    mut start: MessageWriter<deepcore_shared::protocol::StartMining>,
+    mut stop: MessageWriter<deepcore_shared::protocol::StopMining>,
+    target: Option<Res<crate::player::TargetedBlock>>,
+    player: Query<&crate::player::PlayerRuntime>,
+    mut last_target: Local<Option<BlockPos>>,
+) {
+    if *state != ConnectionState::Playing {
+        return;
+    }
+    let Some(target) = target else {
+        return;
+    };
+    let Ok(runtime) = player.single() else {
+        return;
+    };
+
+    let current = match (&target.0, runtime.mining.is_some()) {
+        (Some(hit), true) => Some(hit.block),
+        _ => None,
+    };
+
+    if current != *last_target {
+        if last_target.is_some() && current.is_none() {
+            stop.write(deepcore_shared::protocol::StopMining);
+        }
+        if let (Some(block), Some(hit)) = (current, target.0) {
+            start.write(deepcore_shared::protocol::StartMining {
+                block,
+                face: wire_face(hit.face),
+            });
+        }
+        *last_target = current;
+    }
+}
+
+/// Converts the shared face type to the wire type.
+fn wire_face(face: deepcore_shared::mining::Face) -> deepcore_shared::protocol::FaceWire {
+    match face {
+        deepcore_shared::mining::Face::West => deepcore_shared::protocol::FaceWire::West,
+        deepcore_shared::mining::Face::East => deepcore_shared::protocol::FaceWire::East,
+        deepcore_shared::mining::Face::Down => deepcore_shared::protocol::FaceWire::Down,
+        deepcore_shared::mining::Face::Up => deepcore_shared::protocol::FaceWire::Up,
+        deepcore_shared::mining::Face::North => deepcore_shared::protocol::FaceWire::North,
+        deepcore_shared::mining::Face::South => deepcore_shared::protocol::FaceWire::South,
     }
 }
 

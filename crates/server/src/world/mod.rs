@@ -59,6 +59,10 @@ impl ServerWorld {
     }
 
     /// Chunks that need saving.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "used by M9 region-file persistence")
+    )]
     pub fn modified_chunks(&self) -> impl Iterator<Item = &ChunkPos> {
         self.modified.iter()
     }
@@ -130,6 +134,13 @@ pub fn interest_set(center: ChunkPos) -> Vec<ChunkPos> {
 pub mod stream;
 
 /// Whether a position is inside the mine's hard bounds.
+///
+/// Used by the intent validators once placing outside the world is a real case
+/// (M3 adds building); it is exercised by tests today.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "exercised by tests; used by M3 building")
+)]
 pub fn in_world(pos: BlockPos) -> bool {
     let half = WORLD_SIZE / 2;
     pos.y >= 0
@@ -143,6 +154,7 @@ pub fn in_world(pos: BlockPos) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use deepcore_shared::content::Registry;
     use std::path::Path;
 
     fn world_gen() -> WorldGen {

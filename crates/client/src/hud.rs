@@ -23,6 +23,10 @@ struct DepthText;
 #[derive(Component)]
 struct FeedbackText;
 
+/// Marker for the connection status line.
+#[derive(Component)]
+struct StatusText;
+
 /// Marker for a hotbar slot's label, with its slot index.
 #[derive(Component)]
 struct HotbarSlot(usize);
@@ -34,7 +38,13 @@ impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, setup_hud).add_systems(
             Update,
-            (update_depth, update_feedback, update_hotbar, tint_crosshair),
+            (
+                update_depth,
+                update_feedback,
+                update_hotbar,
+                tint_crosshair,
+                update_status,
+            ),
         );
     }
 }
@@ -104,6 +114,25 @@ fn setup_hud(mut commands: Commands, registry: Res<ContentRegistry>) {
         },
     ));
 
+    // Connection status, top-centre: this is where "Content mismatch" and
+    // loading progress appear.
+    commands.spawn((
+        StatusText,
+        Text::new(""),
+        TextFont {
+            font_size: FontSize::Px(16.0),
+            ..default()
+        },
+        TextColor(Color::srgb(0.95, 0.85, 0.55)),
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Percent(50.0),
+            top: Val::Px(44.0),
+            margin: UiRect::new(Val::Px(-150.0), Val::Auto, Val::Auto, Val::Auto),
+            ..default()
+        },
+    ));
+
     // Hotbar: nine slots along the bottom.
     commands
         .spawn(Node {
@@ -145,6 +174,17 @@ fn setup_hud(mut commands: Commands, registry: Res<ContentRegistry>) {
 
     // Show what the starting tool is, so the first frame is not empty.
     let _ = registry;
+}
+
+/// Shows the connection state, including refusal reasons.
+fn update_status(
+    connection: Res<crate::net::ConnectionState>,
+    mut text: Query<&mut Text, With<StatusText>>,
+) {
+    let Ok(mut text) = text.single_mut() else {
+        return;
+    };
+    **text = crate::session::status_text(&connection);
 }
 
 /// Updates the depth readout from the player's height.

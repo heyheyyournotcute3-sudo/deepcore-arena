@@ -20,6 +20,7 @@ pub mod content;
 pub mod mesh;
 pub mod mining;
 pub mod movement;
+pub mod net_sim;
 pub mod protocol;
 pub mod voxel;
 pub mod worldgen;

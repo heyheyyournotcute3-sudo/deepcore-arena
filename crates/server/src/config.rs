@@ -19,6 +19,8 @@ pub struct ServerConfig {
     pub simulate_loss_percent: u32,
     /// Run forever instead of exiting (used by tests with a tick budget).
     pub max_ticks: Option<u64>,
+    /// Content directory to load, overriding the default `assets/data`.
+    pub data_dir: Option<String>,
 }
 
 impl Default for ServerConfig {
@@ -31,6 +33,7 @@ impl Default for ServerConfig {
             simulate_latency_ms: 0,
             simulate_loss_percent: 0,
             max_ticks: None,
+            data_dir: None,
         }
     }
 }
@@ -92,6 +95,9 @@ pub fn parse_args(args: &[String]) -> Result<ServerConfig, String> {
                         .map_err(|_| format!("--max-ticks: {value:?} is not a number"))?,
                 );
             }
+            "--data" => {
+                config.data_dir = Some(take_value()?);
+            }
             "-h" | "--help" => {
                 return Err(help_text().to_string());
             }
@@ -113,6 +119,7 @@ pub fn help_text() -> &'static str {
        --simulate-latency <ms>   add one-way latency to all traffic\n\
        --simulate-loss <pct>     drop pct% of packets\n\
        --max-ticks <n>           stop after n simulation ticks\n\
+       --data <dir>              load content from <dir> instead of assets/data\n\
        -h, --help                show this help"
 }
 

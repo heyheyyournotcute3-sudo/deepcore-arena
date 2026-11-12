@@ -12,7 +12,6 @@ use deepcore_shared::voxel::BlockId;
 use deepcore_shared::voxel::BlockPos;
 
 use crate::PendingBlockChanges;
-use crate::net::ClientRegistry;
 use crate::sim::validate::{BlockSource, PlayerView, validate_mining};
 use crate::world::ServerWorld;
 
@@ -37,6 +36,12 @@ impl MiningTimers {
     }
 
     /// The block a client is currently mining, if any.
+    ///
+    /// Used by tests and by the debug overlay once that lands.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "used by tests; HUD overlay lands in M2 polish")
+    )]
     pub fn current(&self, client_id: u64) -> Option<(BlockPos, u32, u32)> {
         self.active
             .iter()
@@ -124,11 +129,6 @@ pub fn try_start_mining(
             Err(reason)
         }
     }
-}
-
-/// Placeholder so `ClientRegistry` is referenced by this module's imports.
-pub fn player_count(registry: &ClientRegistry) -> usize {
-    registry.player_count()
 }
 
 #[cfg(test)]

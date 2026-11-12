@@ -60,7 +60,7 @@ fn main() {
         }
     };
 
-    let registry = match load_registry() {
+    let registry = match load_registry(config.data_dir.as_deref()) {
         Ok(registry) => registry,
         Err(message) => {
             eprintln!("server: {message}");
@@ -126,8 +126,14 @@ fn main() {
 }
 
 /// Loads and validates content, or returns a readable failure.
-fn load_registry() -> Result<Registry, String> {
-    let dir = std::path::PathBuf::from(asset_dir()).join("data");
+///
+/// `override_dir` lets a dedicated server point at a different content set,
+/// which is also how the "Content mismatch" rejection is tested.
+fn load_registry(override_dir: Option<&str>) -> Result<Registry, String> {
+    let dir = match override_dir {
+        Some(dir) => std::path::PathBuf::from(dir),
+        None => std::path::PathBuf::from(asset_dir()).join("data"),
+    };
     let set = load_from_dir(&dir)
         .map_err(|err| format!("failed to load content from {}: {err}", dir.display()))?;
     Registry::from_content(&set).map_err(|err| format!("failed to resolve content: {err}"))

@@ -280,7 +280,7 @@ fn handle_menu_buttons(
     mouse: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
     windows: Query<&Window>,
-    actions: Query<(&MenuAction, &Interaction, &ComputedNode, &GlobalTransform)>,
+    actions: Query<(&MenuAction, &ComputedNode, &GlobalTransform)>,
     mut menu: ResMut<MenuState>,
     mut start: MessageWriter<StartSession>,
     mut exit: MessageWriter<AppExit>,
@@ -293,7 +293,7 @@ fn handle_menu_buttons(
     let clicked = mouse.just_pressed(MouseButton::Left);
 
     if clicked && let Some(cursor) = cursor {
-        for (action, _interaction, node, transform) in &actions {
+        for (action, node, transform) in &actions {
             let size = node.size();
             let center = transform.translation().truncate();
             let half = size * 0.5;

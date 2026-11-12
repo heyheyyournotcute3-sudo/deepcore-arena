@@ -27,6 +27,31 @@ use crate::config::ServerConfig as DeepcoreConfig;
 #[derive(Resource, Debug, Clone, Copy)]
 pub struct ContentHash(pub u64);
 
+/// A client that has been refused and should be disconnected shortly, once its
+/// refusal message has had time to flush.
+#[derive(Component, Debug, Clone, Copy)]
+pub struct PendingDisconnect {
+    /// Ticks remaining before the connection is dropped.
+    pub after_ticks: u32,
+}
+
+/// Drops connections whose refusal has had time to reach the client.
+pub fn process_pending_disconnects(
+    mut commands: Commands,
+    mut registry: ResMut<ClientRegistry>,
+    mut pending: Query<(Entity, &mut PendingDisconnect)>,
+) {
+    for (entity, mut state) in &mut pending {
+        if state.after_ticks == 0 {
+            debug!(%entity, "dropping refused connection");
+            commands.entity(entity).despawn();
+            registry.clients.retain(|c| c.entity != entity);
+        } else {
+            state.after_ticks -= 1;
+        }
+    }
+}
+
 /// Per-client server-side state.
 #[derive(Resource, Default)]
 pub struct ClientRegistry {
@@ -60,11 +85,6 @@ impl ClientRegistry {
     /// Finds a player mutably by client entity.
     pub fn by_entity_mut(&mut self, entity: Entity) -> Option<&mut ConnectedPlayer> {
         self.clients.iter_mut().find(|c| c.entity == entity)
-    }
-
-    /// Finds a player by numeric id.
-    pub fn by_player_id(&self, player_id: u64) -> Option<&ConnectedPlayer> {
-        self.clients.iter().find(|c| c.player_id == player_id)
     }
 
     /// Number of accepted players.
@@ -152,7 +172,12 @@ impl Plugin for NetServerPlugin {
             .add_observer(on_client_connected)
             .add_systems(
                 Update,
-                (handle_hello, handle_disconnects, report_server_state),
+                (
+                    handle_hello,
+                    process_pending_disconnects,
+                    handle_disconnects,
+                    report_server_state,
+                ),
             );
     }
 }
@@ -232,9 +257,13 @@ pub fn handle_hello(
                         reason: reason.clone(),
                     },
                 });
-                // Drop the connection: a refused client must not linger.
-                commands.entity(entity).despawn();
-                registry.clients.retain(|c| c.entity != entity);
+                // Give the refusal a moment to reach the client before dropping
+                // the connection. Disconnecting in the same tick loses the
+                // message, and the player then sees a bare disconnect instead of
+                // "Content mismatch".
+                commands
+                    .entity(entity)
+                    .insert(PendingDisconnect { after_ticks: 15 });
             }
         }
     }
@@ -278,14 +307,6 @@ pub fn report_server_state(
     }
 }
 
-/// Builds a chat message for broadcasting.
-pub fn chat(from: &str, text: &str) -> ChatMessage {
-    ChatMessage {
-        from: from.to_string(),
-        text: text.to_string(),
-    }
-}
-
 /// Number of live connections reported by the transport.
 pub fn connected_count(server: &RenetServer) -> usize {
     server.clients_id().len()
@@ -297,7 +318,7 @@ mod tests {
 
     fn player(entity_bits: u32, name: &str, accepted: bool) -> ConnectedPlayer {
         ConnectedPlayer {
-            entity: Entity::from_bits(entity_bits),
+            entity: Entity::from_bits(entity_bits as u64),
             player_id: entity_bits as u64,
             avatar: None,
             name: name.to_string(),
@@ -320,10 +341,6 @@ mod tests {
         registry.clients.push(player(7, "seven", true));
         assert!(registry.by_entity(Entity::from_bits(7)).is_some());
         assert!(registry.by_entity(Entity::from_bits(8)).is_none());
-        assert_eq!(
-            registry.by_player_id(7).map(|c| c.name.as_str()),
-            Some("seven")
-        );
         assert!(registry.by_entity_mut(Entity::from_bits(7)).is_some());
     }
 

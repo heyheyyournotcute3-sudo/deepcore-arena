@@ -58,9 +58,14 @@ pub fn stream_chunks(
         let Some(avatar) = player.avatar else {
             continue;
         };
-        let Ok((transform, _)) = avatars.get(avatar) else {
+        let Ok((transform, owner)) = avatars.get(avatar) else {
             continue;
         };
+        // Guard against a stale avatar pointer: stream only the body that
+        // actually belongs to this client.
+        if owner.client != player.entity {
+            continue;
+        }
         let center = ChunkPos::containing(deepcore_shared::voxel::BlockPos::new(
             transform.position[0].floor() as i32,
             transform.position[1].floor() as i32,
