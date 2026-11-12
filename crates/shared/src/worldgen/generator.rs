@@ -74,13 +74,19 @@ impl WorldGen {
         let origin = pos.origin();
         let mut chunk = Chunk::new(pos);
 
-        // Fast reject: chunks entirely outside the world are solid bedrock so
-        // that a player can never walk off the edge.
+        // Chunks entirely above the surface are open sky: empty, not bedrock.
+        // (Treating them as solid would bury the surface under an invisible
+        // shell and hide the whole world from a player standing on it.)
+        if origin.y > Self::surface_y() {
+            return Chunk::new(pos);
+        }
+
+        // Chunks entirely below the floor, or outside the horizontal bounds, are
+        // solid bedrock so a player can never walk or fall out of the world.
         let fully_outside = origin.x + CHUNK_SIZE <= -WORLD_SIZE / 2
             || origin.x >= WORLD_SIZE / 2
             || origin.z + CHUNK_SIZE <= -WORLD_SIZE / 2
             || origin.z >= WORLD_SIZE / 2
-            || origin.y >= Self::surface_y()
             || origin.y + CHUNK_SIZE < 0;
 
         if fully_outside {
@@ -524,6 +530,31 @@ mod tests {
             }
         }
         assert!(solid > 20, "expected mostly solid rock, got {solid}/40");
+    }
+
+    #[test]
+    fn chunks_above_the_surface_are_empty_sky() {
+        // Regression: chunks above the surface must be air, not bedrock. A solid
+        // sky chunk buries the surface and hides the entire world from a player
+        // standing on it.
+        let g = make_gen(2024);
+        let surface = WORLD_DEPTH;
+        // The chunk strictly above the surface chunk is pure sky.
+        let surface_chunk_y = surface.div_euclid(CHUNK_SIZE);
+        let chunk_above = ChunkPos::new(0, surface_chunk_y + 1, 0);
+        let chunk = g.generate(chunk_above);
+        let non_air = chunk.iter_blocks().filter(|(_, b)| !b.is_air()).count();
+        assert_eq!(non_air, 0, "chunk above the surface must be entirely air");
+
+        // The chunk containing the surface holds ground but not a solid ceiling.
+        let surface_chunk = ChunkPos::new(0, surface_chunk_y, 0);
+        let chunk = g.generate(surface_chunk);
+        let non_air = chunk.iter_blocks().filter(|(_, b)| !b.is_air()).count();
+        assert!(non_air > 0, "the surface chunk must contain ground");
+        assert!(
+            non_air < (CHUNK_SIZE * CHUNK_SIZE * 2) as usize,
+            "the surface chunk should be mostly air above the ground, got {non_air} solid blocks"
+        );
     }
 
     #[test]

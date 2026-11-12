@@ -30,7 +30,7 @@ pub struct PlayerInput {
 }
 
 /// Tunable physics constants for the player controller.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, bevy::prelude::Resource)]
 pub struct PlayerPhysics {
     /// Downward acceleration in blocks/s².
     pub gravity: f32,

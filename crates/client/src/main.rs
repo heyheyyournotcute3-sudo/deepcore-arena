@@ -1,96 +1,81 @@
 //! Deepcore client.
 //!
-//! Windowed first-person client. For M0 it opens a window and renders a lit
-//! test scene to prove the render stack works end to end.
+//! Windowed first-person client. For M1 the client runs the world locally; M2
+//! splits it into an authoritative server with streaming and prediction.
 
 use bevy::prelude::*;
 use bevy::window::WindowResolution;
 
+mod hud;
+mod player;
+mod render;
+
+use deepcore_shared::content::registry::Registry;
+use deepcore_shared::content::{ContentRegistry, load_from_dir};
+use deepcore_shared::worldgen::WorldGen;
+
+/// Default world seed used when none is given on the command line.
+pub const DEFAULT_SEED: u64 = 2024;
+
 fn main() {
+    let seed = std::env::args()
+        .skip_while(|a| a != "--seed")
+        .nth(1)
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(DEFAULT_SEED);
+
+    let registry = match load_registry() {
+        Ok(registry) => registry,
+        Err(message) => {
+            eprintln!("Deepcore: {message}");
+            std::process::exit(1);
+        }
+    };
+
     App::new()
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
-                title: "Deepcore".to_string(),
-                resolution: WindowResolution::new(1280, 720),
-                ..default()
-            }),
-            ..default()
-        }))
-        .insert_resource(ClearColor(Color::srgb(0.05, 0.07, 0.10)))
-        .insert_resource(GlobalAmbientLight {
-            color: Color::srgb(0.6, 0.7, 0.9),
-            brightness: 220.0,
-            ..default()
-        })
+        .add_plugins(
+            DefaultPlugins
+                .set(AssetPlugin {
+                    // Assets live at the workspace root, not next to the binary, so the
+                    // game runs correctly from `cargo run` and from a release bundle.
+                    file_path: asset_root(),
+                    ..default()
+                })
+                .set(WindowPlugin {
+                    primary_window: Some(Window {
+                        title: "Deepcore".to_string(),
+                        resolution: WindowResolution::new(1280, 720),
+                        ..default()
+                    }),
+                    ..default()
+                }),
+        )
+        .insert_resource(ClearColor(Color::srgb(0.42, 0.56, 0.72)))
+        .insert_resource(WorldGen::new(seed, registry.clone()))
+        .insert_resource(ContentRegistry(registry))
         .add_plugins(deepcore_shared::SharedPlugin)
-        .add_systems(Startup, setup_scene)
-        .add_systems(Update, spin_cube)
+        .add_plugins((render::RenderPlugin, player::PlayerPlugin, hud::HudPlugin))
         .run();
 }
 
-/// Marker for the placeholder cube that M0 renders.
-#[derive(Component)]
-struct TestCube;
-
-/// Builds a camera, a sun, a fill light and a test cube.
-fn setup_scene(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
-    // Ground plane so the cube reads as sitting on something.
-    commands.spawn((
-        Mesh3d(meshes.add(Plane3d::default().mesh().size(32.0, 32.0))),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgb(0.18, 0.20, 0.22),
-            perceptual_roughness: 0.95,
-            ..default()
-        })),
-    ));
-
-    // The test cube: a stand-in for a voxel block.
-    commands.spawn((
-        TestCube,
-        Mesh3d(meshes.add(Cuboid::new(1.0, 1.0, 1.0))),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgb(0.62, 0.45, 0.32),
-            perceptual_roughness: 0.8,
-            ..default()
-        })),
-        Transform::from_xyz(0.0, 0.5, 0.0),
-    ));
-
-    // Sun.
-    commands.spawn((
-        DirectionalLight {
-            illuminance: 10_000.0,
-            shadow_maps_enabled: true,
-            ..default()
-        },
-        Transform::from_xyz(4.0, 8.0, 4.0).looking_at(Vec3::ZERO, Vec3::Y),
-    ));
-
-    // Fill light.
-    commands.spawn((
-        PointLight {
-            intensity: 150_000.0,
-            range: 30.0,
-            shadow_maps_enabled: true,
-            ..default()
-        },
-        Transform::from_xyz(-4.0, 6.0, 6.0),
-    ));
-
-    // Camera.
-    commands.spawn((
-        Camera3d::default(),
-        Transform::from_xyz(-3.0, 3.0, 7.0).looking_at(Vec3::new(0.0, 0.5, 0.0), Vec3::Y),
-    ));
+/// Finds the `assets` directory.
+///
+/// Prefers `CARGO_MANIFEST_DIR/../../assets` during development so `cargo run`
+/// works from anywhere, and falls back to `assets` relative to the working
+/// directory for a packaged build.
+fn asset_root() -> String {
+    let dev = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+    if dev.exists() {
+        return dev.display().to_string();
+    }
+    "assets".to_string()
 }
 
-/// Slowly rotates the test cube so the render loop is visibly alive.
-fn spin_cube(time: Res<Time>, mut query: Query<&mut Transform, With<TestCube>>) {
-    for mut transform in &mut query {
-        transform.rotate_y(time.delta_secs() * 0.6);
-    }
+/// Loads and validates the content files, turning any error into a readable
+/// message. The client must fail loudly rather than run with broken content.
+fn load_registry() -> Result<Registry, String> {
+    let dir = std::path::PathBuf::from(asset_root()).join("data");
+    let set = load_from_dir(&dir)
+        .map_err(|err| format!("failed to load content from {}: {err}", dir.display()))?;
+    Registry::from_content(&set).map_err(|err| format!("failed to resolve content: {err}"))
 }
