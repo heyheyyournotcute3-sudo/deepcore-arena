@@ -1,0 +1,116 @@
+// Deepcore depth layers, shallow to deep.
+//
+// `depth` is the range below the surface, in blocks. Layers must be contiguous.
+// `base_block` fills the layer; `fill_blocks` add variety with a relative share.
+// `ores` are 3D-noise veins. `hazards` are what makes the layer dangerous.
+
+[
+    (
+        id: "topsoil",
+        depth: (0, 16),
+        base_block: "dirt",
+        fill_blocks: [("gravel", 0.25), ("clay", 0.15), ("sand", 0.20)],
+        ores: [
+            (block: "coal_seam", frequency: 0.030, vein_size: (4, 12)),
+        ],
+        hazards: [],
+        ambient_temp: 15.0,
+    ),
+    (
+        id: "shale_beds",
+        depth: (16, 64),
+        base_block: "stone",
+        fill_blocks: [("limestone", 0.20), ("shale", 0.25)],
+        ores: [
+            (block: "coal_seam", frequency: 0.022, vein_size: (6, 24)),
+            (block: "malachite", frequency: 0.016, vein_size: (4, 16)),
+            (block: "cassiterite", frequency: 0.010, vein_size: (4, 12)),
+            (block: "hematite", frequency: 0.018, vein_size: (5, 20)),
+        ],
+        hazards: [Darkness],
+        ambient_temp: 16.0,
+    ),
+    (
+        id: "granite_depths",
+        depth: (64, 160),
+        base_block: "granite",
+        fill_blocks: [("limestone", 0.10)],
+        ores: [
+            (block: "hematite", frequency: 0.014, vein_size: (5, 18)),
+            (block: "coal_seam", frequency: 0.010, vein_size: (4, 14)),
+            (block: "galena", frequency: 0.012, vein_size: (4, 14)),
+            (block: "sphalerite", frequency: 0.011, vein_size: (4, 12)),
+            (block: "sulfur_deposit", frequency: 0.009, vein_size: (3, 10)),
+            (block: "quartz", frequency: 0.010, vein_size: (3, 10)),
+            (block: "bauxite", frequency: 0.010, vein_size: (4, 14)),
+            (block: "rock_salt", frequency: 0.013, vein_size: (5, 16)),
+        ],
+        hazards: [
+            Darkness,
+            Flooding(pocket_chance: 0.002, max_volume: 512),
+        ],
+        ambient_temp: 18.0,
+    ),
+    (
+        id: "basalt_furnace",
+        depth: (160, 288),
+        base_block: "basalt",
+        fill_blocks: [("obsidian", 0.05)],
+        ores: [
+            (block: "pentlandite", frequency: 0.011, vein_size: (4, 12)),
+            (block: "wolframite", frequency: 0.006, vein_size: (3, 8)),
+            (block: "chromite", frequency: 0.010, vein_size: (4, 12)),
+            (block: "graphite_vein", frequency: 0.011, vein_size: (4, 14)),
+            (block: "fluorite", frequency: 0.006, vein_size: (3, 8)),
+            (block: "zircon", frequency: 0.006, vein_size: (3, 8)),
+            (block: "gold_vein", frequency: 0.005, vein_size: (3, 7)),
+            (block: "sulfur_deposit", frequency: 0.008, vein_size: (3, 10)),
+        ],
+        hazards: [
+            Darkness,
+            Heat(extra_degrees: 25.0),
+            Gas(pocket_chance: 0.004),
+        ],
+        ambient_temp: 35.0,
+    ),
+    (
+        id: "deep_crust",
+        depth: (288, 448),
+        base_block: "gneiss",
+        fill_blocks: [("obsidian", 0.12)],
+        ores: [
+            (block: "pitchblende", frequency: 0.004, vein_size: (3, 9)),
+            (block: "monazite", frequency: 0.007, vein_size: (3, 10)),
+            (block: "wolframite", frequency: 0.008, vein_size: (3, 10)),
+            (block: "gold_vein", frequency: 0.006, vein_size: (3, 8)),
+            (block: "graphite_vein", frequency: 0.009, vein_size: (4, 12)),
+            (block: "zircon", frequency: 0.007, vein_size: (3, 9)),
+        ],
+        hazards: [
+            Darkness,
+            Heat(extra_degrees: 55.0),
+            Gas(pocket_chance: 0.003),
+            CaveIn(max_span: 7),
+            Radiation(dose_per_sec: 0.02),
+        ],
+        ambient_temp: 60.0,
+    ),
+    (
+        id: "mantle_edge",
+        depth: (448, 512),
+        base_block: "mantle_rock",
+        fill_blocks: [("obsidian", 0.20)],
+        ores: [
+            (block: "dense_pitchblende", frequency: 0.006, vein_size: (4, 12)),
+            (block: "core_crystal", frequency: 0.0015, vein_size: (2, 5)),
+            (block: "monazite", frequency: 0.006, vein_size: (3, 8)),
+        ],
+        hazards: [
+            Darkness,
+            Heat(extra_degrees: 120.0),
+            CaveIn(max_span: 5),
+            Radiation(dose_per_sec: 0.10),
+        ],
+        ambient_temp: 110.0,
+    ),
+]

@@ -40,9 +40,11 @@ deepcore-shared = { path = "crates/shared" }
 
 # Dev-only dynamic linking for Bevy, per prompt. Harmless when unused.
 [workspace.lints.clippy]
-# Correctness-adjacent lints, enforced as errors by scripts/check.sh.
-unwrap_used = "warn"
-expect_used = "warn"
+# `unwrap`/`expect` are banned in shipping code (the prompt forbids them on
+# network, file and content input). Tests use them freely to assert preconditions,
+# so the lint is applied per-crate via #![deny] in non-test modules rather than
+# workspace-wide.
+
 # Bevy queries and systems are naturally complex / have many params.
 type_complexity = "allow"
 too_many_arguments = "allow"

@@ -15,4 +15,7 @@ impl Plugin for SharedPlugin {
 
 /// Current network protocol version. Bumped whenever a replicated component
 /// or protocol message changes shape.
+pub mod content;
+pub mod voxel;
+
 pub const PROTOCOL_VERSION: u32 = 1;
