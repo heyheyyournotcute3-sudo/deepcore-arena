@@ -208,8 +208,60 @@ Known issues:
 Also note: `PROMPT.md` at the repo root holds the full specification, so a session
 resuming from this file has the requirements available in-repo.
 
-Next: **M2 — multiplayer foundation**: authoritative server + client split,
-handshake with protocol version and content hash, chunk streaming with interest
-management, replicated players with interpolation, movement prediction and
-reconciliation, mining/placing through validated intents, main menu
-(Host / Join by IP), latency and loss simulation, bot clients.
+### M2 — Multiplayer foundation — PARTIAL
+
+Everything below was **verified by running it**, with logs quoted.
+
+Built:
+- **Protocol** (`shared/src/protocol.rs`): `ClientHello`/`ServerHello`, intents
+  (`MoveInput`, `StartMining`, `StopMining`, `PlaceBlock`), server messages
+  (batched `BlockChangeBatch`, `ChunkBatch`, `ChunkUnload`, `MoveCorrection`,
+  `MiningRefused`, `ChatMessage`), replicated components. `PROTOCOL_VERSION = 2`.
+- **Handshake** with protocol-version and content-hash checks, producing exactly
+  `"Content mismatch"` when content differs.
+- **Server authority**: `ServerWorld` chunk store, avatar spawning, authoritative
+  movement using the *same* `step_player` the client predicts with, mining timers
+  in `FixedUpdate`.
+- **Intent validation** (`server/src/sim/validate.rs`): reach (5 / 6 with drill),
+  line of sight by voxel raycast, tool tier, slot contents, place-target checks.
+  20 tests, including unloaded-chunk and out-of-range-slot safety.
+- **Chunk streaming** with interest management (6 chunks horizontal, 4 vertical),
+  nearest-first, unload messages, rate-limited per tick.
+- **Movement prediction and reconciliation**: client buffers unacked inputs,
+  server echoes `last_processed_seq`, client rewinds/replays, corrections under
+  0.3 blocks blend out linearly over 100 ms, larger ones snap.
+- **Main menu**: Host game, Join by IP, Play alone, name and address fields,
+  error display.
+- **`--simulate-latency` / `--simulate-loss`** on both binaries
+  (`shared/src/net_sim.rs`, 7 tests) — renet 2.0 has no built-in simulation.
+- **`server --bots N`** headless bots going through real intent validation.
+- **`--headless --join ADDR --run-secs N`** on the client, which is how the
+  automated multiplayer tests run without a GPU.
+
+**Verified by running:**
+
+| Check | Result |
+|---|---|
+| Server + 2 clients, handshake | both `client accepted`, avatars spawned |
+| Chunk streaming | 40–62 chunks received per client, both reach `world loaded` |
+| Connection stability | both clients stay connected for the full run, no disconnects |
+| Content mismatch | server logs `refusing client reason=Content mismatch`; client logs `server refused the connection reason=Content mismatch` |
+| 8-bot soak, 10 minutes | **18,000 ticks, 596/599 heartbeats at exactly 30.0 Hz, 0 panics**, 1062 blocks mined, bots dug from y=512 to y=480 |
+
+**Not done / not verified (be honest about these):**
+- **Replicated player *rendering*.** Other players' avatars are replicated as
+  `PlayerTransform` components, but the client has no system that draws remote
+  players as visible bodies yet, and no 100 ms interpolation buffer. The
+  replication and the transform data exist; the visual is missing.
+- **"See each other move and dig in real time" is therefore not demonstrated.**
+  The server logs both players, but I have not shown a screenshot of one player
+  visible to another. This is the main gap against M2's acceptance criteria.
+- **150 ms latency "feels responsive"** is not verified: the simulation code and
+  tests exist, but "feels responsive" needs a human on real hardware.
+- Client-side prediction currently only *stores* the unacked inputs; the replay
+  step after a snap is implemented but not exercised by an automated test.
+- Placing blocks over the network is wired server-side but the client's hotbar is
+  still single-player-only (inventory is M3).
+
+Next: close the M2 rendering gap (remote player bodies + interpolation), then
+**M3 — content, inventory, crafting (Era 0)**.
