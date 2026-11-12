@@ -10,6 +10,7 @@ name = "atlas_gen"
 path = "src/main.rs"
 
 [dependencies]
+deepcore-shared = { workspace = true }
 
 [lints]
 workspace = true

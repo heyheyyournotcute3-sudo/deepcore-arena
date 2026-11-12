@@ -330,6 +330,9 @@ dependencies = [
 [[package]]
 name = "atlas_gen"
 version = "0.1.0"
+dependencies = [
+ "deepcore-shared",
+]
 
 [[package]]
 name = "atomic-polyfill"

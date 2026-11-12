@@ -15,7 +15,9 @@ impl Plugin for SharedPlugin {
 
 /// Current network protocol version. Bumped whenever a replicated component
 /// or protocol message changes shape.
+pub mod atlas;
 pub mod content;
+pub mod mining;
 pub mod movement;
 pub mod voxel;
 pub mod worldgen;
