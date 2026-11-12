@@ -1,0 +1,15 @@
+[package]
+name = "deepcore-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "server"
+path = "src/main.rs"
+
+[dependencies]
+bevy = { workspace = true, features = ["multi_threaded", "bevy_log", "std"] }
+deepcore-shared = { workspace = true }
+tracing = { workspace = true }

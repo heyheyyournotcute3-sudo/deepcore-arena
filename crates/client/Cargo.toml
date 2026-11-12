@@ -1,0 +1,28 @@
+[package]
+name = "deepcore-client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "client"
+path = "src/main.rs"
+
+[dependencies]
+bevy = { workspace = true, features = [
+    "multi_threaded",
+    "bevy_log",
+    "bevy_pbr",
+    "bevy_winit",
+    "bevy_core_pipeline",
+    "bevy_asset",
+    "bevy_render",
+    "x11",
+    "png",
+    "tonemapping_luts",
+    "zstd_rust",
+    "std",
+] }
+deepcore-shared = { workspace = true }
+tracing = { workspace = true }

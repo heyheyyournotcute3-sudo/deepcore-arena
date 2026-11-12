@@ -1,0 +1,12 @@
+[package]
+name = "atlas_gen"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "atlas_gen"
+path = "src/main.rs"
+
+[dependencies]
