@@ -1,13 +1,3 @@
-# Deepcore lint policy. `scripts/check.sh` runs clippy with `-D warnings`,
-# so anything listed here is a hard failure.
-[workspace.lints.clippy]
-# Correctness-adjacent lints we want as errors everywhere.
-unwrap_used = "warn"
-expect_used = "warn"
-panic = "warn"
-# Style lints that catch real problems in Bevy code.
-type_complexity = "allow"   # Bevy queries are naturally complex.
-too_many_arguments = "allow" # Bevy systems take many params by design.
-
-[workspace.lints.rust]
-unsafe_code = "forbid"
+# Deepcore clippy configuration.
+# Lint *levels* live in Cargo.toml under [workspace.lints]; this file holds only
+# clippy's behavioural settings.

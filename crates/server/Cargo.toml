@@ -13,3 +13,6 @@ path = "src/main.rs"
 bevy = { workspace = true, features = ["multi_threaded", "bevy_log", "std"] }
 deepcore-shared = { workspace = true }
 tracing = { workspace = true }
+
+[lints]
+workspace = true

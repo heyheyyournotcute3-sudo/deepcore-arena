@@ -26,3 +26,6 @@ bevy = { workspace = true, features = [
 ] }
 deepcore-shared = { workspace = true }
 tracing = { workspace = true }
+
+[lints]
+workspace = true

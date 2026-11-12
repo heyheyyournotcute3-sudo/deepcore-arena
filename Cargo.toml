@@ -39,6 +39,17 @@ bytemuck = { version = "=1.24.0", features = ["derive"] }
 deepcore-shared = { path = "crates/shared" }
 
 # Dev-only dynamic linking for Bevy, per prompt. Harmless when unused.
+[workspace.lints.clippy]
+# Correctness-adjacent lints, enforced as errors by scripts/check.sh.
+unwrap_used = "warn"
+expect_used = "warn"
+# Bevy queries and systems are naturally complex / have many params.
+type_complexity = "allow"
+too_many_arguments = "allow"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
 [profile.dev]
 opt-level = 1
 
