@@ -17,5 +17,6 @@ impl Plugin for SharedPlugin {
 /// or protocol message changes shape.
 pub mod content;
 pub mod voxel;
+pub mod worldgen;
 
 pub const PROTOCOL_VERSION: u32 = 1;
