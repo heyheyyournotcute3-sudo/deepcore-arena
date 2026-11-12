@@ -2,6 +2,7 @@
 
 pub mod atlas;
 pub mod chunks;
+pub mod remote;
 
 use bevy::prelude::*;
 
@@ -12,7 +13,7 @@ pub struct RenderPlugin;
 
 impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(ChunkRenderPlugin)
+        app.add_plugins((ChunkRenderPlugin, remote::RemotePlayersPlugin))
             .add_systems(Startup, setup_scene)
             .add_systems(
                 Update,

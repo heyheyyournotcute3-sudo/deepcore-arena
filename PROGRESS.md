@@ -248,20 +248,41 @@ Built:
 | Content mismatch | server logs `refusing client reason=Content mismatch`; client logs `server refused the connection reason=Content mismatch` |
 | 8-bot soak, 10 minutes | **18,000 ticks, 596/599 heartbeats at exactly 30.0 Hz, 0 panics**, 1062 blocks mined, bots dug from y=512 to y=480 |
 
+**Remote player rendering (added after the first pass):**
+- `client/src/render/remote.rs` draws a capsule body, head and floating name for
+  every replicated player, interpolated **100 ms in the past** between the two
+  most recent snapshots (7 tests: interpolation midpoint, clamping before/after
+  history, shortest-path yaw, exact decay window).
+- Replication rules were missing entirely at first — `Replicated` alone does
+  nothing. Both sides now call `.replicate::<PlayerTransform>()` and friends.
+- A `VisibilityFilter` (`AvatarOwner`) hides each player's own avatar from
+  themselves, so you do not see a duplicate of your own body.
+- **Verified by running:** with two headless clients, Alice logs
+  `remote players visible count=1 players=["Bob"]` and Bob logs
+  `players=["Alice"]` — each sees exactly the other, never themselves.
+
 **Not done / not verified (be honest about these):**
-- **Replicated player *rendering*.** Other players' avatars are replicated as
-  `PlayerTransform` components, but the client has no system that draws remote
-  players as visible bodies yet, and no 100 ms interpolation buffer. The
-  replication and the transform data exist; the visual is missing.
-- **"See each other move and dig in real time" is therefore not demonstrated.**
-  The server logs both players, but I have not shown a screenshot of one player
-  visible to another. This is the main gap against M2's acceptance criteria.
-- **150 ms latency "feels responsive"** is not verified: the simulation code and
-  tests exist, but "feels responsive" needs a human on real hardware.
-- Client-side prediction currently only *stores* the unacked inputs; the replay
-  step after a snap is implemented but not exercised by an automated test.
-- Placing blocks over the network is wired server-side but the client's hotbar is
-  still single-player-only (inventory is M3).
+- **A screenshot of one player seeing another is still missing.** Remote body
+  rendering is implemented and its interpolation is unit-tested, and replication
+  is verified headlessly, but the rendering client in this sandbox (llvmpipe,
+  ~2 FPS at the default view radius) is dropped by netcode's connection timeout
+  before a second player joins. At `--view-radius 1` it reaches ~15 FPS but still
+  times out after ~30 s. This is a software-rendering limitation, not a logic
+  bug, but it means the on-screen two-player view is unproven here.
+- **150 ms latency "feels responsive"** is not verified. The simulation and its
+  tests exist; "feels responsive" needs a human on real hardware.
+- Client-side prediction stores unacked inputs and replays after a snap, but the
+  replay path is not exercised by an automated test.
+- Placing blocks is validated server-side, but the client hotbar is still
+  single-player-only (inventory is M3).
+
+**Known issue worth fixing next:** a client whose frame rate is very low can be
+dropped by netcode's connection timeout, because the client sends at most one
+update per frame. A real fix is to run the transport update on a timer
+independent of rendering; noted for M9.
+
+Next: close the two-player *visual* proof on hardware that can render it, then
+**M3 — content, inventory, crafting (Era 0)**.
 
 Next: close the M2 rendering gap (remote player bodies + interpolation), then
 **M3 — content, inventory, crafting (Era 0)**.

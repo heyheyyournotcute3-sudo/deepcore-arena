@@ -18,9 +18,30 @@ use deepcore_shared::worldgen::WorldGen;
 use crate::render::atlas::chunk_material;
 
 /// Horizontal view radius in chunks.
+///
+/// Overridable at runtime (see `ViewRadius`) so a machine that cannot manage the
+/// default can still play. The spec's 60 FPS target assumes the default.
 pub const VIEW_RADIUS_XZ: i32 = 6;
 /// Vertical view radius in chunks.
 pub const VIEW_RADIUS_Y: i32 = 4;
+
+/// Runtime view radius, defaulting to the constants above.
+#[derive(Resource, Debug, Clone, Copy)]
+pub struct ViewRadius {
+    /// Horizontal radius in chunks.
+    pub xz: i32,
+    /// Vertical radius in chunks.
+    pub y: i32,
+}
+
+impl Default for ViewRadius {
+    fn default() -> Self {
+        Self {
+            xz: VIEW_RADIUS_XZ,
+            y: VIEW_RADIUS_Y,
+        }
+    }
+}
 
 /// Client-side store of loaded chunks.
 #[derive(Resource, Default)]
@@ -80,6 +101,7 @@ pub struct ChunkRenderPlugin;
 impl Plugin for ChunkRenderPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<MeshJobs>()
+            .init_resource::<ViewRadius>()
             .add_systems(Startup, setup_render_assets)
             .add_systems(
                 Update,
@@ -135,6 +157,7 @@ fn stream_chunks(
     mut jobs: ResMut<MeshJobs>,
     assets: Option<Res<RenderAssets>>,
     world_gen: Option<Res<WorldGen>>,
+    radius: Option<Res<ViewRadius>>,
 ) {
     let (Some(assets), Some(world_gen)) = (assets, world_gen) else {
         return;
@@ -142,6 +165,7 @@ fn stream_chunks(
     let Ok(transform) = player.single() else {
         return;
     };
+    let radius = radius.as_deref().copied().unwrap_or_default();
     let player_chunk = ChunkPos::containing(BlockPos::new(
         transform.translation.x.floor() as i32,
         transform.translation.y.floor() as i32,
@@ -153,9 +177,9 @@ fn stream_chunks(
     // adjacent to the player unloaded, and since meshing waits on horizontal
     // neighbours that would leave the ground under the player unmeshed forever.
     let mut wanted: Vec<(i32, ChunkPos)> = Vec::new();
-    for dy in -VIEW_RADIUS_Y..=VIEW_RADIUS_Y {
-        for dz in -VIEW_RADIUS_XZ..=VIEW_RADIUS_XZ {
-            for dx in -VIEW_RADIUS_XZ..=VIEW_RADIUS_XZ {
+    for dy in -radius.y..=radius.y {
+        for dz in -radius.xz..=radius.xz {
+            for dx in -radius.xz..=radius.xz {
                 let pos = ChunkPos::new(
                     player_chunk.x + dx,
                     player_chunk.y + dy,
@@ -351,6 +375,7 @@ pub fn unload_distant_chunks(
     player: Query<&Transform, With<crate::player::LocalPlayer>>,
     mut chunks: ResMut<ClientChunks>,
     mut commands: Commands,
+    radius: Option<Res<ViewRadius>>,
 ) {
     let Ok(transform) = player.single() else {
         return;
@@ -360,16 +385,14 @@ pub fn unload_distant_chunks(
         transform.translation.y.floor() as i32,
         transform.translation.z.floor() as i32,
     ));
+    let radius = radius.as_deref().copied().unwrap_or_default();
     let mut to_remove = Vec::new();
     for pos in chunks.chunks.keys() {
         let dx = pos.x - center.x;
         let dy = pos.y - center.y;
         let dz = pos.z - center.z;
         // Keep a margin beyond the view radius so chunks do not thrash.
-        if dx.abs() > VIEW_RADIUS_XZ + 2
-            || dy.abs() > VIEW_RADIUS_Y + 2
-            || dz.abs() > VIEW_RADIUS_XZ + 2
-        {
+        if dx.abs() > radius.xz + 2 || dy.abs() > radius.y + 2 || dz.abs() > radius.xz + 2 {
             to_remove.push(*pos);
         }
     }

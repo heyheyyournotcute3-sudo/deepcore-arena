@@ -22,6 +22,27 @@ use crate::sim::mining::{MiningTimers, WorldBlocks, try_start_mining};
 use crate::sim::validate::{PlayerView, validate_placing};
 use crate::world::ServerWorld;
 
+/// A visibility filter that hides an avatar from its own owner.
+///
+/// Without this, a player receives their own body and sees a duplicate standing
+/// in front of them, because the client also renders its own camera.
+#[derive(Component, Debug, Clone, Copy)]
+#[component(immutable)]
+pub struct AvatarOwner {
+    /// The client entity that owns this avatar.
+    pub client: Entity,
+}
+
+impl bevy_replicon::prelude::VisibilityFilter for AvatarOwner {
+    type ClientComponent = bevy_replicon::prelude::AuthorizedClient;
+    type Scope = Entity;
+
+    fn is_visible(&self, client: Entity, _component: Option<&Self::ClientComponent>) -> bool {
+        // Visible to everyone except the player it belongs to.
+        self.client != client
+    }
+}
+
 /// Links a server-side avatar entity back to its client.
 ///
 /// The client entity is what chunk streaming and per-client messages address, so
@@ -73,6 +94,9 @@ pub fn spawn_avatars(
         let entity = commands
             .spawn((
                 ConnectedAvatar {
+                    client: player.entity,
+                },
+                AvatarOwner {
                     client: player.entity,
                 },
                 PlayerInfo {

@@ -23,6 +23,9 @@ use deepcore_shared::protocol::{
 
 use crate::config::ServerConfig as DeepcoreConfig;
 
+/// Shared netcode private key, matching the client's.
+pub const PRIVATE_KEY: [u8; 32] = [0x0D; 32];
+
 /// The server's content hash, used in the handshake.
 #[derive(Resource, Debug, Clone, Copy)]
 pub struct ContentHash(pub u64);
@@ -136,8 +139,18 @@ pub fn start_transport(
         current_time,
         max_clients: MAX_PLAYERS,
         protocol_id: config.protocol_id,
-        authentication: ServerAuthentication::Unsecure,
-        public_addresses: Default::default(),
+        // Must match the client's key and auth mode.
+        authentication: ServerAuthentication::Secure {
+            private_key: PRIVATE_KEY,
+        },
+        // Secure connect tokens are validated against the server's advertised
+        // addresses, so a token naming 127.0.0.1 must be matched by an
+        // advertised 127.0.0.1. Listing the loopback address is what makes
+        // local and LAN play work; a public server adds its own address here.
+        public_addresses: vec![
+            SocketAddr::new(Ipv4Addr::LOCALHOST.into(), config.port),
+            SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), config.port),
+        ],
     };
     let transport = NetcodeServerTransport::new(server_config, socket)
         .map_err(|err| format!("could not create the netcode transport: {err}"))?;
@@ -157,6 +170,13 @@ impl Plugin for NetServerPlugin {
         // `add_client_message` writes into.
         app.add_plugins((RepliconPlugins, RepliconRenetPlugins))
             .init_resource::<ClientRegistry>()
+            // Replication rules. Without these, entities marked `Replicated`
+            // are never actually sent to clients: the marker alone does nothing.
+            .replicate::<deepcore_shared::protocol::PlayerTransform>()
+            .replicate::<deepcore_shared::protocol::PlayerInfo>()
+            .replicate::<deepcore_shared::protocol::Vitals>()
+            // Hide each player's own avatar from themselves.
+            .add_visibility_filter::<crate::sim::players::AvatarOwner>()
             .add_client_message::<ClientHello>(Channel::Ordered)
             .add_server_message::<ServerHello>(Channel::Ordered)
             .add_client_message::<deepcore_shared::protocol::MoveInput>(Channel::Unordered)

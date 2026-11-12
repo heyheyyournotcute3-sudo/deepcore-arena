@@ -9,7 +9,7 @@ use std::time::SystemTime;
 
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
-use bevy_replicon_renet::netcode::{ClientAuthentication, NetcodeClientTransport};
+use bevy_replicon_renet::netcode::{ClientAuthentication, ConnectToken, NetcodeClientTransport};
 use bevy_replicon_renet::renet::ConnectionConfig;
 use bevy_replicon_renet::{RenetChannelsExt, RenetClient, RepliconRenetPlugins};
 
@@ -76,6 +76,19 @@ pub struct Prediction {
     pub smoothing_start_length: f32,
 }
 
+/// Lifetime of a connect token, in seconds.
+const TOKEN_EXPIRY_SECS: u64 = 30;
+
+/// How long the server waits for traffic from a client before dropping it.
+///
+/// Generous on purpose: a slow client is not a crashed client, and the default
+/// 5 seconds disconnects players on weak hardware.
+const CONNECTION_TIMEOUT_SECS: i32 = 30;
+
+/// Shared netcode key. A real deployment would use a private key from config;
+/// this is a development key, and the lobby service (M10) will supply one.
+const PRIVATE_KEY: [u8; 32] = [0x0D; 32];
+
 /// How long to blend a small correction instead of snapping.
 pub const SMOOTHING_SECS: f32 = 0.1;
 /// Corrections smaller than this are smoothed; larger ones snap.
@@ -87,6 +100,11 @@ pub struct NetClientPlugin;
 impl Plugin for NetClientPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((RepliconPlugins, RepliconRenetPlugins))
+            // The client must declare the same rules the server replicates, or
+            // it cannot deserialize them.
+            .replicate::<deepcore_shared::protocol::PlayerTransform>()
+            .replicate::<deepcore_shared::protocol::PlayerInfo>()
+            .replicate::<deepcore_shared::protocol::Vitals>()
             .init_resource::<ConnectionState>()
             .init_resource::<LocalIdentity>()
             .init_resource::<Prediction>()
@@ -104,7 +122,12 @@ impl Plugin for NetClientPlugin {
             .add_server_message::<ChatMessage>(Channel::Ordered)
             .add_systems(
                 Update,
-                (handle_server_hello, handle_corrections, apply_smoothing),
+                (
+                    handle_server_hello,
+                    handle_corrections,
+                    apply_smoothing,
+                    report_remote_players,
+                ),
             );
     }
 }
@@ -152,11 +175,24 @@ pub fn start_client(
     let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))
         .map_err(|err| format!("could not open a local UDP socket: {err}"))?;
 
-    let authentication = ClientAuthentication::Unsecure {
-        client_id,
+    // A secure connect token lets us set the connection timeout. The `Unsecure`
+    // path hardcodes 5 seconds, which drops a client that is alive but running
+    // slowly (a heavy frame, a slow disk, a laptop on battery). 30 seconds is
+    // still short enough to free a slot promptly after a real crash.
+    let token = ConnectToken::generate(
+        current_time,
         protocol_id,
-        server_addr: addr,
-        user_data: None,
+        TOKEN_EXPIRY_SECS,
+        client_id,
+        CONNECTION_TIMEOUT_SECS,
+        vec![addr],
+        None,
+        &PRIVATE_KEY,
+    )
+    .map_err(|err| format!("could not create a connect token: {err}"))?;
+
+    let authentication = ClientAuthentication::Secure {
+        connect_token: token,
     };
     let transport = NetcodeClientTransport::new(current_time, authentication, socket)
         .map_err(|err| format!("could not create the client transport: {err}"))?;
@@ -276,6 +312,30 @@ pub fn apply_smoothing(time: Res<Time>, mut prediction: ResMut<Prediction>) {
         prediction.smoothing_start_length = 0.0;
     } else {
         prediction.smoothing_offset *= (current - shrink) / current;
+    }
+}
+
+/// Reports how many remote players the client can currently see.
+///
+/// This runs with and without rendering, so "are other players replicating?" is
+/// answerable in headless tests as well as on screen.
+pub fn report_remote_players(
+    remotes: Query<&deepcore_shared::protocol::PlayerInfo>,
+    mut last: Local<Option<std::time::Instant>>,
+) {
+    let now = std::time::Instant::now();
+    let due = last
+        .map(|instant| now.duration_since(instant).as_secs_f32() >= 2.0)
+        .unwrap_or(true);
+    if !due {
+        return;
+    }
+    *last = Some(now);
+    let names: Vec<&str> = remotes.iter().map(|info| info.name.as_str()).collect();
+    if names.is_empty() {
+        debug!("no remote players replicated yet");
+    } else {
+        info!(count = names.len(), players = ?names, "remote players visible");
     }
 }
 

@@ -41,6 +41,8 @@ pub struct ClientArgs {
     pub simulate_latency_ms: u32,
     /// Simulated packet loss percent.
     pub simulate_loss_percent: u32,
+    /// Chunk view radius, overriding the default of 6.
+    pub view_radius: Option<i32>,
 }
 
 fn parse_client_args() -> ClientArgs {
@@ -80,6 +82,12 @@ fn parse_client_args() -> ClientArgs {
             "--simulate-latency" => {
                 if let Some(value) = args.get(index + 1).and_then(|v| v.parse().ok()) {
                     parsed.simulate_latency_ms = value;
+                }
+                index += 2;
+            }
+            "--view-radius" => {
+                if let Some(value) = args.get(index + 1).and_then(|v| v.parse().ok()) {
+                    parsed.view_radius = Some(value);
                 }
                 index += 2;
             }
@@ -143,6 +151,13 @@ fn main() {
         .add_plugins(deepcore_shared::SharedPlugin)
         .add_plugins(net::NetClientPlugin)
         .add_plugins(session::SessionPlugin);
+
+    if let Some(radius) = args.view_radius {
+        app.insert_resource(render::chunks::ViewRadius {
+            xz: radius.clamp(1, 16),
+            y: (radius / 2).clamp(1, 8),
+        });
+    }
 
     if !args.headless {
         app.add_plugins((
