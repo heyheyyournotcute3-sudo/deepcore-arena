@@ -101,6 +101,17 @@ Workspace of 4 crates, pinned deps, profiles, `rustfmt.toml`, `clippy.toml`,
 heartbeat log. Client opens a window and renders a lit scene (verified by
 screenshot under Xvfb + lavapipe).
 
+**Gate status: `./scripts/check.sh` passes end to end** (fmt check → clippy
+`--all-targets -D warnings` → tests), verified after touching source files to
+force a rebuild.
+
+> **Process note (do not repeat).** This gate was once reported green while it
+> was actually failing: clippy had been run as `--workspace` without
+> `--all-targets`, which skips integration tests, so an unused variable in
+> `crates/shared/tests/mining_loop.rs` went unnoticed. `check.sh` now prints the
+> exact command it runs, and the only acceptable evidence that a milestone is
+> green is running `./scripts/check.sh` itself to completion.
+
 ### M1 — Voxel world — DONE (single process)
 
 Built:
@@ -129,11 +140,34 @@ Built:
   unmineable block, hotbar, depth + layer meter, mining refusal messages).
 
 Measured against the prompt's budgets:
-| Metric | Budget | Measured |
-|---|---|---|
-| Chunk generation | < 5 ms | **1.3 ms** (was 5.9 ms before optimization) |
-| Chunk meshing (32³) | < 4 ms | **0.55 ms** |
-| Solid chunk meshed to shell | — | 6144 faces, not 98k |
+
+| Metric | Budget | Measured | Status |
+|---|---|---|---|
+| Chunk generation | < 5 ms | **1.3 ms** (was 5.9 ms) | met |
+| Chunk meshing (32³) | < 4 ms | **0.55 ms** | met |
+| Solid chunk meshed to shell | — | 6144 faces, not 98k | — |
+| **Client FPS, view radius 6** | **≥ 60 FPS on a mid-range GPU** | **1–4 FPS** | **NOT VERIFIED — see below** |
+
+### Frame-rate instrumentation
+
+The client now measures itself rather than having performance asserted about it.
+`crates/client/src/diagnostics.rs` installs Bevy's `FrameTimeDiagnosticsPlugin`,
+accumulates a rolling window, shows a live `FPS / ms / chunks / view radius`
+readout top-right, and logs a summary every 5 s:
+
+```
+INFO client::diagnostics: client performance fps=1.0 avg_ms=963.78
+  worst_ms=1011.36 best_ms=908.87 frames=20 chunks_loaded=440
+  view_radius_chunks=6
+```
+
+**The 60 FPS target is unverified in this environment.** The build sandbox has no
+GPU; the only available adapter is **llvmpipe** (Mesa software rasterisation,
+reported by Bevy as *"a driver that only supports software rendering"*). Software
+rendering of ~15k triangles per chunk at radius 6 gives the 1–4 FPS above, which
+says nothing about real hardware. Frame rate must be re-measured on a machine
+with a GPU before this criterion can be called met. The measurement harness is in
+place; only the hardware is missing.
 
 Tests: **85** passing, including chunk/palette round-trips, negative-coordinate
 chunk maths, worldgen determinism, ore presence per layer, uranium-only-deep,
@@ -170,6 +204,9 @@ Known issues:
   (llvmpipe), which is slow but correct.
 - Chunk streaming is single-player only so far; the server does not yet send
   chunks (M2).
+
+Also note: `PROMPT.md` at the repo root holds the full specification, so a session
+resuming from this file has the requirements available in-repo.
 
 Next: **M2 — multiplayer foundation**: authoritative server + client split,
 handshake with protocol version and content hash, chunk streaming with interest

@@ -103,38 +103,50 @@ fn granite_blocks_a_steel_pickaxe() {
 }
 
 #[test]
-fn raycast_targets_the_block_a_player_looks_at() {
+fn raycast_targets_the_ground_a_player_stands_on() {
     let registry = registry();
     let world = WorldGen::new(2024, registry.clone());
     let surface = WorldGen::surface_y();
 
-    // Build a tiny world view with the chunk the player stands in.
-    let eye = Vec3::new(0.5, surface as f32 + 2.6, 0.5);
-    let target = BlockPos::new(0, surface - 1, 0);
-    let chunk_pos = target.chunk();
-    let mut chunk = Chunk::new(chunk_pos);
-    chunk.set(
-        BlockPos::new(
-            target.x.rem_euclid(32),
-            target.y.rem_euclid(32),
-            target.z.rem_euclid(32),
-        ),
-        registry.block("stone").expect("stone"),
-    );
-
-    struct Only(ChunkPos, BlockId);
-    impl RayFilter for Only {
+    // Raycast against the real generated terrain, using the same filter shape
+    // the client uses: a block stops the ray if the world is solid there.
+    struct Generated<'a>(&'a WorldGen);
+    impl RayFilter for Generated<'_> {
         fn blocks(&self, x: i32, y: i32, z: i32) -> bool {
-            let pos = BlockPos::new(x, y, z);
-            pos.chunk() == self.0 && !self.1.is_air()
+            !self.0.block_at(x, y, z).is_air()
         }
     }
 
-    // Looking straight down at the block.
-    let hit = raycast(eye, Vec3::NEG_Y, 5.0, &Only(chunk_pos, BlockId(1)));
-    assert!(hit.is_some(), "should hit the block below");
-    let hit = hit.expect("hit");
-    assert_eq!(hit.block, target, "wrong block targeted: {:?}", hit.block);
+    // Stand at the camp and look straight down. The eye is above the surface,
+    // so the first solid block below must be the surface block itself.
+    let eye = Vec3::new(0.5, surface as f32 + 2.6, 0.5);
+    let hit = raycast(eye, Vec3::NEG_Y, 5.0, &Generated(&world))
+        .expect("looking down at the ground should hit it");
+    assert_eq!(
+        hit.block,
+        BlockPos::new(0, surface, 0),
+        "should target the surface block directly below the player"
+    );
+    // Looking up from the surface must hit nothing: the sky is empty.
+    assert!(
+        raycast(eye, Vec3::Y, 5.0, &Generated(&world)).is_none(),
+        "the sky above the camp must be empty"
+    );
+
+    // Mining must mark the chunk modified so persistence saves it. Start from
+    // the real generated chunk so the block is genuinely present.
+    let mut chunk = world.generate(hit.block.chunk());
+    let original = chunk.get(hit.block);
+    assert!(
+        !original.is_air(),
+        "the targeted block must be solid before mining"
+    );
+    chunk.set(hit.block, BlockId::AIR);
+    assert!(
+        chunk.is_modified(),
+        "a mined block must mark its chunk modified"
+    );
+    assert!(chunk.get(hit.block).is_air(), "the block must be gone");
 }
 
 #[test]

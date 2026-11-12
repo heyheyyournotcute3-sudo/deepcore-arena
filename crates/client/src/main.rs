@@ -6,6 +6,7 @@
 use bevy::prelude::*;
 use bevy::window::WindowResolution;
 
+mod diagnostics;
 mod hud;
 mod player;
 mod render;
@@ -54,7 +55,12 @@ fn main() {
         .insert_resource(WorldGen::new(seed, registry.clone()))
         .insert_resource(ContentRegistry(registry))
         .add_plugins(deepcore_shared::SharedPlugin)
-        .add_plugins((render::RenderPlugin, player::PlayerPlugin, hud::HudPlugin))
+        .add_plugins((
+            render::RenderPlugin,
+            player::PlayerPlugin,
+            hud::HudPlugin,
+            diagnostics::DiagnosticsPlugin,
+        ))
         .run();
 }
 

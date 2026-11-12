@@ -8,7 +8,9 @@ export PATH="$HOME/.cargo/bin:$PATH"
 echo "==> cargo fmt --check"
 cargo fmt --all --check
 
-echo "==> cargo clippy --workspace -- -D warnings"
+# --all-targets is essential: without it clippy skips integration tests,
+# benches and examples, and a broken test file passes the gate unnoticed.
+echo "==> cargo clippy --workspace --all-targets -- -D warnings"
 cargo clippy --workspace --all-targets -- -D warnings
 
 echo "==> cargo test --workspace"
