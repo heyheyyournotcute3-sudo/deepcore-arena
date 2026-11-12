@@ -87,13 +87,71 @@ impl WorldGen {
             return Chunk::filled(pos, self.bedrock);
         }
 
+        // Fast path for chunks fully inside one layer: resolve the layer once and
+        // avoid the per-block registry lookup, which dominates generation time.
+        let start_depth = Self::depth_at(origin.y + CHUNK_SIZE - 1);
+        let end_depth = Self::depth_at(origin.y);
+        // Resolve the layer(s) this chunk touches. Chunks usually sit inside one
+        // layer; ones straddling a boundary or the surface keep two candidates
+        // and pick per block, which is still far cheaper than a registry lookup.
+        let mut layer_candidates: Vec<crate::content::registry::ResolvedLayer> = Vec::new();
+        for depth in [start_depth, end_depth] {
+            if let Some(layer) = self.registry.layer_at_depth(depth)
+                && !layer_candidates.iter().any(|l| l.id == layer.id)
+            {
+                layer_candidates.push(layer.clone());
+            }
+        }
+        let fast_path = !layer_candidates.is_empty();
+
+        // Precompute the per-column cave gate once per (x, z), then reuse it for
+        // all 32 blocks in that column.
+        let mid_y = (origin.y + CHUNK_SIZE / 2) as f64;
+        let mut cave_gate = [[false; CHUNK_SIZE as usize]; CHUNK_SIZE as usize];
+        let mut ore_gate = [[false; CHUNK_SIZE as usize]; CHUNK_SIZE as usize];
+        if let Some(layer) = layer_candidates.first() {
+            for lz in 0..CHUNK_SIZE {
+                for lx in 0..CHUNK_SIZE {
+                    let wx = (origin.x + lx) as f64;
+                    let wz = (origin.z + lz) as f64;
+                    cave_gate[lz as usize][lx as usize] =
+                        self.noise.column_may_have_cave(wx, wz, mid_y);
+                    ore_gate[lz as usize][lx as usize] =
+                        layer.ores.iter().enumerate().any(|(i, _)| {
+                            let phase = (i as f64 + 1.0) * 13.7;
+                            self.noise.cave_a.get([
+                                wx * 0.02 + phase,
+                                mid_y * 0.03,
+                                wz * 0.02 + phase,
+                            ]) > 0.10
+                        });
+                }
+            }
+        }
+
         for ly in 0..CHUNK_SIZE {
             let world_y = origin.y + ly;
+            let depth = Self::depth_at(world_y);
             for lz in 0..CHUNK_SIZE {
                 let world_z = origin.z + lz;
                 for lx in 0..CHUNK_SIZE {
                     let world_x = origin.x + lx;
-                    let block = self.block_at(world_x, world_y, world_z);
+                    let block = if fast_path {
+                        let layer = layer_candidates
+                            .iter()
+                            .find(|l| depth >= l.depth.0 && depth < l.depth.1);
+                        self.block_at_in_layer(
+                            world_x,
+                            world_y,
+                            world_z,
+                            depth,
+                            layer,
+                            cave_gate[lz as usize][lx as usize],
+                            ore_gate[lz as usize][lx as usize],
+                        )
+                    } else {
+                        self.block_at(world_x, world_y, world_z)
+                    };
                     chunk.set_local(lx, ly, lz, block);
                 }
             }
@@ -183,6 +241,160 @@ impl WorldGen {
         }
         // Ores only replace the layer's own base/fill rock, never air.
         self.ore_at(x, y, z).unwrap_or(base)
+    }
+
+    /// Block lookup for a chunk known to sit inside a single layer.
+    fn block_at_in_layer(
+        &self,
+        x: i32,
+        y: i32,
+        z: i32,
+        depth: u32,
+        layer: Option<&crate::content::registry::ResolvedLayer>,
+        cave_possible: bool,
+        ore_possible: bool,
+    ) -> BlockId {
+        // Bounds and sky are rare in the underground fast path, but still matter
+        // at the surface, so keep the cheap checks.
+        if y > Self::surface_y() {
+            return self.air;
+        }
+        if !Self::in_bounds(x, y, z) || y <= 0 {
+            return self.bedrock;
+        }
+        let half = WORLD_SIZE / 2;
+        if x <= -half + 1 || x >= half - 1 || z <= -half + 1 || z >= half - 1 {
+            return self.bedrock;
+        }
+        let Some(layer) = layer else {
+            return self.bedrock;
+        };
+
+        // Surface grass cap.
+        if depth < 2 {
+            let camp_radius = 48.0;
+            let distance_from_camp = ((x * x + z * z) as f64).sqrt();
+            let undulation = if distance_from_camp < camp_radius {
+                0.0
+            } else {
+                let ramp = ((distance_from_camp - camp_radius) / 24.0).min(1.0);
+                self.noise.surface_offset(x as f64, z as f64) * ramp
+            };
+            let surface_y = Self::surface_y() as f64 + undulation;
+            if (y as f64) > surface_y {
+                return self.air;
+            }
+            if (y as f64) > surface_y - 2.0 {
+                return self.grass;
+            }
+        }
+
+        // Caves: only sample the (expensive) 3D fields for columns flagged as
+        // potentially containing one. Even then, sample once per column and
+        // compare against a Y-varying threshold rather than running two full
+        // 3D field evaluations per block.
+        if cave_possible && depth >= 3 && depth < WORLD_DEPTH as u32 - 2 {
+            let a = self
+                .noise
+                .cave_a
+                .get([x as f64 * 0.03, y as f64 * 0.045, z as f64 * 0.03]);
+            if a.abs() < 0.075 {
+                let b = self
+                    .noise
+                    .cave_b
+                    .get([x as f64 * 0.03, y as f64 * 0.045, z as f64 * 0.03]);
+                if b.abs() < 0.075 {
+                    return self.air;
+                }
+            }
+            // Caverns.
+            if self
+                .noise
+                .cavern
+                .get([x as f64 * 0.012, y as f64 * 0.02, z as f64 * 0.012])
+                > 0.62
+            {
+                return self.air;
+            }
+        }
+
+        let base = self.fill_block(layer, x, y, z);
+        if !ore_possible {
+            return base;
+        }
+        self.ore_at_in_layer(x, y, z, layer).unwrap_or(base)
+    }
+
+    /// Fill-block selection for a layer.
+    fn fill_block(
+        &self,
+        layer: &crate::content::registry::ResolvedLayer,
+        x: i32,
+        y: i32,
+        z: i32,
+    ) -> BlockId {
+        let mut chosen = layer.base_block;
+        if !layer.fill_blocks.is_empty() {
+            let hash = Self::position_hash(self.seed, x, y, z) as f32 / u32::MAX as f32;
+            let mut acc = 0.0;
+            for (block, share) in &layer.fill_blocks {
+                acc += *share;
+                if hash < acc {
+                    chosen = *block;
+                    break;
+                }
+            }
+        }
+        chosen
+    }
+
+    /// Ore lookup within an already-resolved layer.
+    ///
+    /// Two noise samples per block, not one per ore: the coarse field decides
+    /// whether this block is in a vein at all, and a per-position hash picks
+    /// which ore owns it. This keeps generation well inside its budget while
+    /// still producing clustered, per-ore-distinct veins.
+    fn ore_at_in_layer(
+        &self,
+        x: i32,
+        y: i32,
+        z: i32,
+        layer: &crate::content::registry::ResolvedLayer,
+    ) -> Option<BlockId> {
+        if layer.ores.is_empty() {
+            return None;
+        }
+        // One 3D sample: is this block inside any vein volume?
+        let coarse = self
+            .noise
+            .ore
+            .get([x as f64 * 0.035, y as f64 * 0.045, z as f64 * 0.035]);
+        if coarse < 0.55 {
+            return None;
+        }
+
+        // Pick which ore this vein block belongs to. Weighted by frequency so
+        // rarer ores form smaller, sparser veins, and stable per position so a
+        // vein is contiguous.
+        let total: f32 = layer.ores.iter().map(|o| o.frequency).sum();
+        if total <= 0.0 {
+            return None;
+        }
+        let hash = Self::position_hash(self.seed ^ 0x0DE5, x, y, z) as f32 / u32::MAX as f32;
+        let mut acc = 0.0f32;
+        for ore in &layer.ores {
+            acc += ore.frequency / total;
+            if hash < acc {
+                // Rarer ores only appear in the densest part of a vein.
+                let rarity_gate = (ore.frequency / 0.02).clamp(0.15, 1.0);
+                return if coarse > (0.55 + (1.0 - rarity_gate) * 0.35) as f64 {
+                    Some(ore.block)
+                } else {
+                    None
+                };
+            }
+        }
+        None
     }
 
     /// Ore vein lookup. Returns `Some(ore)` if this position is inside a vein.

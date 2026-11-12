@@ -82,6 +82,22 @@ impl NoiseFields {
         tube || cavern
     }
 
+    /// Cheap pre-check: `true` if no cave is possible near this column.
+    ///
+    /// Sampling the two 3D fields only at the column's mid height is a very
+    /// close approximation of "could there be a cave here at all", because the
+    /// fields vary slowly in Y compared with the block size. Skipping the
+    /// expensive per-block sampling for the vast majority of solid columns is
+    /// the single largest generation speedup.
+    pub fn column_may_have_cave(&self, x: f64, z: f64, mid_y: f64) -> bool {
+        let a = self.cave_a.get([x * 0.03, mid_y * 0.045, z * 0.03]).abs();
+        let b = self.cave_b.get([x * 0.03, mid_y * 0.045, z * 0.03]).abs();
+        // Generous threshold so real caves are never missed.
+        let tube_near = a < 0.30 && b < 0.30;
+        let cavern_near = self.cavern.get([x * 0.012, mid_y * 0.02, z * 0.012]) > 0.45;
+        tube_near || cavern_near
+    }
+
     /// Raw ore density at a position, in `-1..1`.
     pub fn ore_density(&self, x: f64, y: f64, z: f64) -> f64 {
         self.ore.get([x * 0.06, y * 0.06, z * 0.06])

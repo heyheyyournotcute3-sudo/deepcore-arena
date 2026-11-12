@@ -17,6 +17,7 @@ impl Plugin for SharedPlugin {
 /// or protocol message changes shape.
 pub mod atlas;
 pub mod content;
+pub mod mesh;
 pub mod mining;
 pub mod movement;
 pub mod voxel;
